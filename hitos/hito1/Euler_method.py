@@ -28,18 +28,18 @@ Fórmula del método de Euler:
         dt = paso temporal
     
 """
-
+print("Empiezo")
 from numpy import array, zeros
-import matplotlib.pyplot as plt
-
+#import matplotlib.pyplot as plt
+print("Empiezo")
 # ---------- PARÁMETROS NUMÉRICOS DE LA SIMULACIÓN -----------
 
 # Número de pasos temporales:
-N = 10000
+N = 10
 # Número de variables del sistema --> U = (x1, x2):
 Nv = 2
 # Paso temporal:
-Dt = 0.001
+Dt = 0.1
 
 #-------------------------------------------------------------
 
@@ -77,8 +77,9 @@ for n in range(0, N):
     U[n+1, :] = U[n, :] + Dt * F(U[n, :])
     
 #-------------------------------------------------------------
-
-
+print("Empiezo")
+print(U)
+print("Empiezo")
 # ----------------- REPRESENTACIÓN GRÁFICA -------------------
 
 # Diagrama de fases \dot{x} (que es x_2, la segunda componente del
@@ -90,4 +91,4 @@ plt.xlabel("x")
 plt.ylabel(r'$\dot{x}$')
 plt.axis('equal')
 plt.grid()
-plt.show()
+#plt.show()

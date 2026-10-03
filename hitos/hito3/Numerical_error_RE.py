@@ -1,11 +1,10 @@
-import sys
-sys.path.append(r"C:\Users\Paula\OneDrive\Imágenes\Escritorio\Uni\MUSE\1º Curso\AM1")
+
 from numpy import array
 from numpy.linalg import norm
 from typing import Callable
-from hito2.EsquemasTemporales import Euler, RK4, Crank_Nicolson, Inverse_Euler
-from hito2.Fisica import Kepler_movement
-from hito2.Cauchy_Problem import Cauchy_Problem
+from EsquemasTemporales import Euler, RK4, Crank_Nicolson, Inverse_Euler
+from Fisica import Kepler_movement
+from Cauchy_Problem import Cauchy_Problem
 
 def Richardson_Error(Esquema: Callable, Orden: int, U0: array, F: Callable, Dt: float, Tf: float)-> array:
     # Solución con Dt:
