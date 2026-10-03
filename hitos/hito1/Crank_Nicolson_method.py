@@ -13,7 +13,7 @@ Misma forma de proceder que en el Euler, solo cambia el esquema.
 F(U) es la misma porque es el mismo problema del oscilador armónico.    
 """
 
-import numpy as np
+from numpy import array, zeros
 import matplotlib.pyplot as plt
 from numpy.linalg import norm
 
@@ -21,11 +21,11 @@ N = 100
 Nv = 2
 Dt = 0.1
 
-def F(U):
-    return np.array([U[1], -U[0]])
+def F(U: array)-> array:
+    return array([U[1], -U[0]])
 
-U = np.zeros((N+1, Nv))
-U[0, :] = np.array([1, 0])
+U = zeros((N+1, Nv))
+U[0, :] = array([1, 0])
 
 """
 IDEA DE CRANK-NICOLSON:
@@ -44,7 +44,7 @@ for n in range(0, N):
     # Llamando Y = U_{n+1}, nos queda:
     # Y - U_n - Dt/2 * (F(U_n) + F(Y)) = R
     # Donde R es el residuo que queremos que sea muy próximo a cero.
-    while norm(Y - U[n,:]-Dt/2*(F(U[n,:])+F(Y)))>1e-6:
+    while norm(Y - U[n,:] - Dt/2 * (F(U[n,:]) + F(Y)))>1e-6:
         R = Y - U[n,:]-Dt/2*(F(U[n,:])+F(Y))
         Y=Y-R
         # Y_new = Y_old - R. Para este problema concreto sí funciona porque
