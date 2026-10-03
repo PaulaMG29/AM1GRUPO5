@@ -4,9 +4,9 @@ Created on Thu Sep 24 13:23:56 2026
 
 @author: Paula
 """
-# ==============================================
-# OSCILADOR ARMÓNICO SIMPLE RESUELTO POR EULER
-# ==============================================
+# =============================================================
+# OSCILADOR ARMÓNICO SIMPLE RESUELTO CON ESQUEMA NUMÉRICO EULER
+# =============================================================
 """
 Supongamos que tenemos una ecuación diferencial:
     dU/dt = F(U)
@@ -28,18 +28,18 @@ Fórmula del método de Euler:
         dt = paso temporal
     
 """
-
-import numpy as np
-import matplotlib.pyplot as plt
-
+print("Empiezo")
+from numpy import array, zeros
+#import matplotlib.pyplot as plt
+print("Empiezo")
 # ---------- PARÁMETROS NUMÉRICOS DE LA SIMULACIÓN -----------
 
 # Número de pasos temporales:
-N = 10000
+N = 10
 # Número de variables del sistema --> U = (x1, x2):
 Nv = 2
 # Paso temporal:
-Dt = 0.001
+Dt = 0.1
 
 #-------------------------------------------------------------
 
@@ -53,17 +53,17 @@ A = (-1  0)
 """
 # Función F(U) = A U. Hace la multiplicación de la matrix A 
 # (específica del oscilador armónico) por el vector U. 
-def F(U):
-    return np.array([1 * U[1], -1 * U[0]])
+def F(U: array)-> array:
+    return array([1 * U[1], -1 * U[0]])
 
 # Crea una matriz de ceros de N+1 filas y 2 columnas. Es decir, cada
 # fila almacena el vector de estado en un instante:
-U = np.zeros((N+1, Nv))
+U = zeros((N+1, Nv))
 
 # Vector de estado con la condición inicial --> x_1 = 1, x_2 = 0:
 # Por tanto, U_0 = (1, 0)
 # Se almacena en la fila zero, y las 2 columnas de la matriz.
-U[0, :] = np.array([1, 0])
+U[0, :] = array([1, 0])
 
 #-------------------------------------------------------------
 
@@ -77,8 +77,9 @@ for n in range(0, N):
     U[n+1, :] = U[n, :] + Dt * F(U[n, :])
     
 #-------------------------------------------------------------
-
-
+print("Empiezo")
+print(U)
+print("Empiezo")
 # ----------------- REPRESENTACIÓN GRÁFICA -------------------
 
 # Diagrama de fases \dot{x} (que es x_2, la segunda componente del
@@ -90,4 +91,4 @@ plt.xlabel("x")
 plt.ylabel(r'$\dot{x}$')
 plt.axis('equal')
 plt.grid()
-plt.show()
+#plt.show()
