@@ -35,11 +35,11 @@ import matplotlib.pyplot as plt
 # ---------- PARÁMETROS NUMÉRICOS DE LA SIMULACIÓN -----------
 
 # Número de pasos temporales:
-N = 100
+N = 10000
 # Número de variables del sistema --> U = (x1, x2):
 Nv = 2
 # Paso temporal:
-Dt = 0.01
+Dt = 0.001
 
 #-------------------------------------------------------------
 
@@ -77,9 +77,7 @@ for n in range(0, N):
     U[n+1, :] = U[n, :] + Dt * F(U[n, :])
     
 #-------------------------------------------------------------
-print("Empiezo")
-print(U)
-print("Empiezo")
+
 # ----------------- REPRESENTACIÓN GRÁFICA -------------------
 
 # Diagrama de fases \dot{x} (que es x_2, la segunda componente del
