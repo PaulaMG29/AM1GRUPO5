@@ -1,8 +1,8 @@
 from numpy import array, zeros, linspace
 import matplotlib.pyplot as plt
 from typing import Callable
-from .EsquemasTemporales import Euler, RK4, Crank_Nicolson, Inverse_Euler
-from .Fisica import Kepler_movement
+from EsquemasTemporales import Euler, RK4, Crank_Nicolson, Inverse_Euler
+from Fisica import Kepler_movement
 
 def Cauchy_Problem(Esquema: Callable, U0: array, F: Callable, Dt: float, Tf: float) -> array:
     Nv = len(U0)
@@ -16,7 +16,7 @@ def Cauchy_Problem(Esquema: Callable, U0: array, F: Callable, Dt: float, Tf: flo
 
 U0 = array([1, 0, 0, 1])
 
-U, t = Cauchy_Problem(Euler, U0, Kepler_movement, 0.0001, 10)
+U, t = Cauchy_Problem(RK4, U0, Kepler_movement, 0.0001, 10)
 
 print (U)
 print (t)

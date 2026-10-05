@@ -1,0 +1,17 @@
+# Entornos virtuales
+.venv/
+venv/
+
+# Caché de Python
+__pycache__/
+*.pyc
+
+# Configuración local de VS Code
+.vscode/
+
+# Archivos temporales de Jupyter
+.ipynb_checkpoints/
+
+# Archivos de sistema Windows
+Thumbs.db
+Desktop.ini

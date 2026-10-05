@@ -1,4 +1,8 @@
 
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).parent.parent / "hito2"))
 from numpy import array
 from numpy.linalg import norm
 from typing import Callable
@@ -26,5 +30,5 @@ U0 = array([1, 0, 0, 1])
 Error = Richardson_Error(Crank_Nicolson, 2, U0, Kepler_movement, 0.1, 10)
 Error_max = max(norm(Error, axis=1))
     
-print(Error)   
-print(Error_max)
+print("Error =", Error)   
+print("Max error =",Error_max)
