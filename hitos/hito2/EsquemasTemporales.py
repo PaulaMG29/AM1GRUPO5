@@ -1,15 +1,10 @@
 from numpy import array
 from typing import Callable
 from numpy.linalg import norm
-from scipy import Newton
-
-from hitos.hito1.Crank_Nicolson_method import Dt
-
-from hitos.hito2.Simulation import Dt
+from scipy.optimize import newton_krylov
 
 def Euler(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
     return U + Dt * F(U, t)
-
 
 def RK4(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
     k1 = F(U, t)
@@ -17,7 +12,6 @@ def RK4(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> arra
     k3 = F(U + Dt*k2/2, t+Dt/2)
     k4 = F(U + Dt*k3, t+Dt/2)
     return U + Dt*(k1+2*k2+2*k3+k4)/6
-
 
 def Crank_Nicolson(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
     """
@@ -27,7 +21,7 @@ def Crank_Nicolson(U: array, t: float, Dt: float, F: Callable[[array,float],arra
     def G(Y):
         return Y + A - Dt/2*(F(U, t) + F(Y, t + Dt))
     A = - U - Dt/2 + F(U, t)
-    return Newton(G, U, 1e-6)
+    return newton_krylov(G, U, 1e-6)
 
 #def Crank_Nicolson(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
 #    Y= U.copy()

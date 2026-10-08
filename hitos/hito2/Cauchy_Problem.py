@@ -4,6 +4,7 @@ from typing import Callable
 from EsquemasTemporales import Euler, RK4, Crank_Nicolson, Inverse_Euler
 from Fisica import Kepler_movement
 
+
 #def Cauchy_Problem(Esquema: Callable, U0: array, F: Callable, Dt: float, Tf: float) -> array:
 #    Nv = len(U0)
 #    N = int(Tf/Dt)
