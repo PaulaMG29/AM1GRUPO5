@@ -1,10 +1,10 @@
 from numpy import array
 from typing import Callable
 from numpy.linalg import norm
+from scipy.optimize import newton_krylov
 
 def Euler(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
     return U + Dt * F(U, t)
-
 
 def RK4(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
     k1 = F(U, t)
@@ -13,13 +13,22 @@ def RK4(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> arra
     k4 = F(U + Dt*k3, t+Dt/2)
     return U + Dt*(k1+2*k2+2*k3+k4)/6
 
-
 def Crank_Nicolson(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
-    Y= U.copy()
-    while norm(Y - U - Dt/2*(F(U, t) + F(Y, t + Dt)))>1e-6:
-        R = Y - U - Dt/2 * (F(U, t) + F(Y, t + Dt))
-        Y = Y - R
-    return Y
+    """
+    G = function
+    U = seed
+    """
+    def G(Y):
+        return Y + A - Dt/2*(F(U, t) + F(Y, t + Dt))
+    A = - U - Dt/2 + F(U, t)
+    return newton_krylov(G, U, 1e-6)
+
+#def Crank_Nicolson(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
+#    Y= U.copy()
+#    while norm(Y - U - Dt/2*(F(U, t) + F(Y, t + Dt)))>1e-6:
+#        R = Y - U - Dt/2 * (F(U, t) + F(Y, t + Dt))
+#        Y = Y - R
+#    return Y
 
 def Inverse_Euler(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
     Y = U.copy()
