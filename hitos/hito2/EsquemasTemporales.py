@@ -1,7 +1,7 @@
 from numpy import array
 from typing import Callable
 from numpy.linalg import norm
-from scipy.optimize import newton_krylov
+from our_Newton import our_Newton
 
 def Euler(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
     return U + Dt * F(U, t)
@@ -18,10 +18,10 @@ def Crank_Nicolson(U: array, t: float, Dt: float, F: Callable[[array,float],arra
     G = function
     U = seed
     """
-    def G(Y):
-        return Y + A - Dt/2*(F(U, t) + F(Y, t + Dt))
-    A = - U - Dt/2 + F(U, t)
-    return newton_krylov(G, U, 1e-6)
+    def G(Y, t):
+        return Y + A - Dt/2*(F(Y, t + Dt))
+    A = - U - Dt/2 * F(U, t)
+    return our_Newton(G, U, 0, 1e-6, 100)
 
 #def Crank_Nicolson(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
 #    Y= U.copy()
