@@ -20,7 +20,7 @@ def Euler_Equations(I1: float, I2: float, I3: float, omega: array) -> array:
 
 print(Euler_Equations(2.0, 3.0, 4.0, array([1.0, 2.0, 3.0])))
 
-def Jacobian(I1: float, I2: float, I3: float, omega: array) -> array:
+def exact_Jacobian(I1: float, I2: float, I3: float, omega: array) -> array:
     """
     Calcula la matriz jacobiana de las ecuaciones de Euler para un cuerpo rígido en rotación.
     
