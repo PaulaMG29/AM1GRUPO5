@@ -46,7 +46,3 @@ def our_Gauss(A: array, b: array) -> array:
             s = s + A[i,j]*x[j]
         x[i] = (b[i] - s) / A[i,i]
     return x
-
-A_diag,x = our_Gauss(A, b)
-print("A_diag:", A_diag)
-print("x:", x)

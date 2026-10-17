@@ -1,11 +1,9 @@
-
-
 from typing import Callable
 from numpy import array, zeros
 from numpy.linalg import LinAlgError, solve, norm
 from our_gauss import our_Gauss
 
-def our_jacobian(F: Callable[[array,float],array], U: array, t: float) -> array:
+def our_jacobian(F: Callable[array,array], U: array, t: float) -> array:
     """
     F: function
     U: current state vector
@@ -24,7 +22,7 @@ def our_jacobian(F: Callable[[array,float],array], U: array, t: float) -> array:
     return J
 
 
-def our_Newton(F: Callable[[array,float],array], U0: array, t: float, tol: float, max_iter: int) -> array:
+def our_Newton(F: Callable[array,array], U0: array, t: float, tol: float, max_iter: int) -> array:
     """
     F: function
     U0: initial guess for the root
