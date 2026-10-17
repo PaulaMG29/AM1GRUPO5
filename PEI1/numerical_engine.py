@@ -123,3 +123,7 @@ def Richardson_Error(Esquema: Callable, Orden: int, U0: array, F: Callable, t: a
     Error = (U2 - U1) / (Dt**Orden - (Dt/2)**Orden) * Dt**Orden
     # Matriz de errores de Richardson de cada componente de U para cada instante temporal
     return Error
+
+#================================================================================================
+# NUMERICAL STABILITY REGION
+#================================================================================================
