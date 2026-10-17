@@ -37,7 +37,7 @@ def exact_Jacobian(I1: float, I2: float, I3: float, omega: array) -> array:
     
     return J
 
-def T(I1: float, I2: float, I3: float, omega: array) -> float:
+def T(I1: float, I2: float, I3: float, omega: array) -> array:
     """
     Calcula la energía cinética de rotación de un cuerpo rígido.
     
@@ -48,6 +48,7 @@ def T(I1: float, I2: float, I3: float, omega: array) -> float:
     Retorna:
     T: Energía cinética de rotación.
     """
+    T = zeros()
     T = 0.5 * (I1 * omega[0]**2 + I2 * omega[1]**2 + I3 * omega[2]**2)
     
     return T
