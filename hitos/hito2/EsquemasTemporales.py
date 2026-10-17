@@ -19,8 +19,8 @@ def Crank_Nicolson(U: array, t: float, Dt: float, F: Callable[[array,float],arra
     U = seed
     """
     def G(Y, t):
-        return Y + A - Dt/2*(F(Y, t + Dt))
-    A = - U - Dt/2 * F(U, t)
+        return Y + C - Dt/2*(F(Y, t + Dt))
+    C = - U - Dt/2 * F(U, t)
     return our_Newton(G, U, 0, 1e-6, 1000)
 
 def Inverse_Euler(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
