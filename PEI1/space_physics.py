@@ -18,7 +18,6 @@ def Euler_Equations(I1: float, I2: float, I3: float, omega: array) -> array:
     
     return array([d_omega1_dt, d_omega2_dt, d_omega3_dt])
 
-print(Euler_Equations(2.0, 3.0, 4.0, array([1.0, 2.0, 3.0])))
 
 def exact_Jacobian(I1: float, I2: float, I3: float, omega: array) -> array:
     """
@@ -48,7 +47,6 @@ def T(I1: float, I2: float, I3: float, omega: array) -> array:
     Retorna:
     T: Energía cinética de rotación.
     """
-    T = zeros()
     T = 0.5 * (I1 * omega[0]**2 + I2 * omega[1]**2 + I3 * omega[2]**2)
     
     return T

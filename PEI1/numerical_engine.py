@@ -76,7 +76,7 @@ def RK4(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> arra
     k1 = F(U, t)
     k2 = F(U + Dt*k1/2, t+Dt/2)
     k3 = F(U + Dt*k2/2, t+Dt/2)
-    k4 = F(U + Dt*k3, t+Dt/2)
+    k4 = F(U + Dt*k3, t+Dt)
     return U + Dt*(k1+2*k2+2*k3+k4)/6
 
 def Crank_Nicolson(U: array, t: float, Dt: float, F: Callable[[array,float],array]) -> array:
