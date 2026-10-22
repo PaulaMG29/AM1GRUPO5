@@ -32,6 +32,13 @@ def estimate_scheme_order(Esquema: Callable, U0: array, F: Callable, t: array) -
         E = U2 - U1
         errors.append(norm(E, inf))
 
+    plt.plot(log(N_values), log(errors))
+    plt.scatter(log(N_values), log(errors), color= 'black')
+    plt.xlabel("ln(N)")
+    plt.ylabel("ln(E)")
+    plt.grid()
+    plt.show() 
+
     # ajuste lineal
     coeffs = polyfit(log(N_values), log(errors), 1)
     slope = coeffs[0]
@@ -53,16 +60,17 @@ def Richardson_Error(Esquema: Callable, U0: array, F: Callable, t: array)-> arra
     Orden = estimate_scheme_order(Esquema, U0, F, t)
     Error = (U2 - U1) / (Dt**Orden - (Dt/2)**Orden) * Dt**Orden
     
-    return Error
+    return Error, Orden
     
 
 #U0 = array([1, 0, 0, 1])
 U0 = array([0, 1])
 t = partition(0, 10, 1000)
 
-Error = Richardson_Error(RK4, U0, Oscilator, t)
+Error, Orden = Richardson_Error(RK4, U0, Oscilator, t)
 Error_max = max(norm(Error, axis=1))
-    
+
+print("Orden del esquema =", Orden) 
 print("Error =", Error)   
 print("Max error =",Error_max)
 
