@@ -1,4 +1,4 @@
-from numpy import array, zeros, linspace, meshgrid, abs, zeros_like
+from numpy import array, zeros, linspace, meshgrid, abs, zeros_like, inf, log, polyfit
 from typing import Callable
 from numpy.linalg import LinAlgError, solve, norm, eigvals
 import matplotlib.pyplot as plt
