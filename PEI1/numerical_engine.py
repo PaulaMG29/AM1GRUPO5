@@ -109,7 +109,40 @@ def Cauchy_Problem(Esquema: Callable, U0: array, F: Callable, t: array) -> array
 # ERROR ESTIMATION
 #================================================================================================
 
-def Richardson_Error(Esquema: Callable, Orden: int, U0: array, F: Callable, t: array)-> array:
+def estimate_scheme_order(Esquema: Callable, U0: array, F: Callable, t: array) -> float:
+    number_meshes = 5
+    N_values = zeros(number_meshes, dtype=int)
+    for i in range(N_values.size):
+        N_values[i] = (len(t) - 1) * 2**(i - 2)
+
+    errors = []
+    for N in N_values:
+        # malla gruesa
+        t1 = partition(t[0], t[-1], N)
+        # malla fina
+        t2 = partition(t[0], t[-1], 2 * N)
+        U1, t1 = Cauchy_Problem(Esquema, U0, F, t1)
+        U2, t2 = Cauchy_Problem(Esquema, U0, F, t2)
+
+        U2 = U2[::2]
+
+        E = U2 - U1
+        errors.append(norm(E, inf))
+
+    plt.plot(log(N_values), log(errors))
+    plt.scatter(log(N_values), log(errors), color= 'black')
+    plt.xlabel("ln(N)")
+    plt.ylabel("ln(E)")
+    plt.grid()
+    plt.show() 
+
+    # ajuste lineal
+    coeffs = polyfit(log(N_values), log(errors), 1)
+    slope = coeffs[0]
+    order = -slope
+    return order
+
+def Richardson_Error(Esquema: Callable, U0: array, F: Callable, t: array)-> array:
     t1 = t
     t2 = partition(t[0], t[-1], 2 * (len(t) - 1))
     Dt = t[1] - t[0]
@@ -117,13 +150,14 @@ def Richardson_Error(Esquema: Callable, Orden: int, U0: array, F: Callable, t: a
     U1, t_1 = Cauchy_Problem(Esquema, U0, F, t1)
     # Solución con Dt /2:
     U2, t_2 = Cauchy_Problem(Esquema, U0, F, t2)
-    
+
     # Comparamos cada 2 puntos de la solución con Dt/2
     U2 = U2[::2]
-    
+
+    Orden = estimate_scheme_order(Esquema, U0, F, t)
     Error = (U2 - U1) / (Dt**Orden - (Dt/2)**Orden) * Dt**Orden
-    # Matriz de errores de Richardson de cada componente de U para cada instante temporal
-    return Error
+    
+    return Error, Orden
 
 #================================================================================================
 # NUMERICAL STABILITY REGION
