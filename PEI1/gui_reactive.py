@@ -10,6 +10,7 @@ import numpy as np
 from matplotlib import animation
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from numpy.typing import NDArray
 
 try:
@@ -39,8 +40,178 @@ SCHEMES: dict[str, tuple[Scheme, int]] = {
 	"Crank-Nicolson": (Crank_Nicolson, 2),
 	"Runge-Kutta 4": (RK4, 4),
 }
+SCHEME_COLORS = {"Euler": "#d95d39", "Crank-Nicolson": "#3767a5", "Runge-Kutta 4": "#167d73"}
 AXIS_NAMES = ("I1 (mínimo)", "I2 (intermedio)", "I3 (máximo)")
+AXIS_COLORS = ("#d95d39", "#167d73", "#3767a5")
+MAX_STEPS = 20000
+LIGHT = np.array([0.45, -0.55, 0.70]) / np.linalg.norm([0.45, -0.55, 0.70])
 
+
+# ================================================================================================
+# GEOMETRY AND POST-PROCESSING HELPERS (no physics or numerics here, only visualisation)
+# ================================================================================================
+
+def box_semiaxes(inertia: Array) -> Array:
+	"""Semiejes de la caja homogénea con momentos (I1, I2, I3): a_i² ∝ I_j + I_k − I_i.
+
+	El eje de inercia mínima es el más largo. Si no se cumple la desigualdad triangular
+	(I3 > I1 + I2) no existe sólido real y se fija un espesor mínimo para poder dibujarlo.
+	"""
+	i1, i2, i3 = inertia
+	squared = np.array([i2 + i3 - i1, i1 + i3 - i2, i1 + i2 - i3], dtype=float)
+	semiaxes = np.sqrt(np.clip(squared, 0.0, None))
+	semiaxes = 0.55 * semiaxes / semiaxes.max()
+	return np.maximum(semiaxes, 0.09)
+
+
+def satellite_model(inertia: Array) -> tuple[list[Array], Array, Array]:
+	"""Satélite en ejes cuerpo: bus, dos alas solares a lo largo del eje 1 y antena en el eje 3.
+
+	Devuelve (caras, colores RGB base, segmentos de estructura separados por NaN).
+	"""
+	a, b, c = box_semiaxes(inertia)
+	faces: list[Array] = []
+	colors: list[tuple[float, float, float]] = []
+	gold, panel, dish, dark = (0.86, 0.66, 0.22), (0.12, 0.22, 0.52), (0.88, 0.89, 0.90), (0.25, 0.25, 0.27)
+
+	corners = np.array([[sx * a, sy * b, sz * c] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])
+	for quad in ((0, 1, 3, 2), (4, 5, 7, 6), (0, 1, 5, 4), (2, 3, 7, 6), (0, 2, 6, 4), (1, 3, 7, 5)):
+		faces.append(corners[list(quad)])
+		colors.append(gold)
+
+	# Alas solares (tres paneles por lado) a lo largo de ±eje 1, en el plano 1-2.
+	width, cell, gap, root = 0.75 * b + 0.12, 0.24, 0.025, a + 0.12
+	for side in (-1, 1):
+		for k in range(3):
+			x0 = root + k * (cell + gap)
+			x1 = x0 + cell
+			faces.append(np.array([
+				[side * x0, -width, 0.0], [side * x1, -width, 0.0],
+				[side * x1, width, 0.0], [side * x0, width, 0.0],
+			]))
+			colors.append(panel)
+
+	# Antena parabólica en la cara +eje 3.
+	radius, depth, base = 0.75 * min(a, b), 0.12, c + 0.05
+	angles = np.linspace(0.0, 2 * np.pi, 15)
+	rim = np.column_stack([radius * np.cos(angles), radius * np.sin(angles), np.full_like(angles, base + depth)])
+	for first, second in zip(rim[:-1], rim[1:]):
+		faces.append(np.array([[0.0, 0.0, base], first, second]))
+		colors.append(dish)
+	# Tobera en la cara −eje 3.
+	nozzle = np.column_stack([0.35 * radius * np.cos(angles), 0.35 * radius * np.sin(angles), np.full_like(angles, -c - 0.12)])
+	for first, second in zip(nozzle[:-1], nozzle[1:]):
+		faces.append(np.array([[0.0, 0.0, -c], first, second]))
+		colors.append(dark)
+
+	nan = [np.nan] * 3
+	struts = np.array([
+		[a, 0, 0], [root, 0, 0], nan,
+		[-a, 0, 0], [-root, 0, 0], nan,
+		[0, 0, base], [0, 0, base + depth + 0.18], nan,
+	], dtype=float)
+	return faces, np.asarray(colors), struts
+
+
+def shaded_colors(faces: list[Array], base_colors: Array) -> Array:
+	"""Sombreado lambertiano (doble cara) respecto a una luz fija en ejes inerciales."""
+	normals = np.array([np.cross(face[1] - face[0], face[2] - face[0]) for face in faces])
+	normals /= np.linalg.norm(normals, axis=1, keepdims=True) + 1e-15
+	intensity = 0.38 + 0.62 * np.abs(normals @ LIGHT)
+	rgb = np.clip(base_colors * intensity[:, None], 0.0, 1.0)
+	return np.column_stack([rgb, np.ones(len(faces))])
+
+
+def propagate_attitude(solution: Array, times: Array) -> Array:
+	"""Matrices de actitud R(t) (cuerpo → inercial) con dR/dt = R [ω]×.
+
+	Cada paso usa la fórmula de Rodrigues con la velocidad angular media del intervalo,
+	por lo que R permanece ortogonal y la cinemática es de segundo orden.
+	"""
+	rotations = np.empty((len(times), 3, 3))
+	rotations[0] = np.eye(3)
+	for n in range(len(times) - 1):
+		rotation_vector = 0.5 * (solution[n] + solution[n + 1]) * (times[n + 1] - times[n])
+		angle = float(np.linalg.norm(rotation_vector))
+		if angle < 1e-14:
+			rotations[n + 1] = rotations[n]
+			continue
+		x, y, z = rotation_vector / angle
+		skew = np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]])
+		increment = np.eye(3) + np.sin(angle) * skew + (1 - np.cos(angle)) * (skew @ skew)
+		rotations[n + 1] = rotations[n] @ increment
+	return rotations
+
+
+def ellipsoid(radii: Array, nu: int = 32, nv: int = 20) -> tuple[Array, Array, Array]:
+	u = np.linspace(0, 2 * np.pi, nu)
+	v = np.linspace(0, np.pi, nv)
+	return (
+		radii[0] * np.outer(np.cos(u), np.sin(v)),
+		radii[1] * np.outer(np.sin(u), np.sin(v)),
+		radii[2] * np.outer(np.ones_like(u), np.cos(v)),
+	)
+
+
+def separatrix_curves(inertia: Array, momentum: float) -> list[Array]:
+	"""Separatriz analítica sobre el elipsoide |L| = momentum (nivel 2T = L²/I2).
+
+	Es la intersección del elipsoide de momento con los planos
+	√(I1(I2−I1)) ω1 = ±√(I3(I3−I2)) ω3: dos elipses que pasan por ±ω*(2).
+	"""
+	i1, i2, i3 = inertia
+	if momentum <= 0 or not (i1 < i2 < i3):
+		return []
+	slope = np.sqrt(i1 * (i2 - i1) / (i3 * (i3 - i2)))
+	theta = np.linspace(0.0, 2 * np.pi, 361)
+	omega1 = momentum * np.cos(theta) / np.sqrt(i1**2 + (i3 * slope) ** 2)
+	omega2 = momentum * np.sin(theta) / i2
+	return [np.column_stack([omega1, omega2, sign * slope * omega1]) for sign in (-1.0, 1.0)]
+
+
+def equilibrium_spectrum(inertia: Array, omega_rate: float, axis_index: int) -> tuple[Array, str]:
+	"""Autovalores de exact_Jacobian en ω*(k) = Ω e_k y su clasificación."""
+	equilibrium = np.zeros(3)
+	equilibrium[axis_index] = omega_rate
+	eigenvalues = np.linalg.eigvals(exact_Jacobian(*inertia, equilibrium))
+	if np.max(eigenvalues.real) > 1e-9:
+		label = "silla hiperbólica (inestable)"
+	else:
+		label = "centro elíptico (estable Lyapunov)"
+	return eigenvalues, label
+
+
+def first_invalid(solution: Array) -> int:
+	"""Primer índice no finito (divergencia numérica) o len(solution)."""
+	bad = ~np.all(np.isfinite(solution), axis=1)
+	return int(np.argmax(bad)) if bad.any() else len(solution)
+
+
+def relative_drift(values: Array) -> Array:
+	"""|q(t) − q(0)| / |q(0)|, con los ceros exactos sustituidos por NaN para la escala log."""
+	drift = np.abs(values - values[0]) / max(abs(values[0]), 1e-300)
+	return np.where(drift > 0, drift, np.nan)
+
+
+def convergence_study(scheme: Scheme, order: int, initial: Array, field: Callable, final_time: float, top: int) -> tuple[Array, Array]:
+	"""‖E_R(t_f)‖ por extrapolación de Richardson para Δt, Δt·2, Δt·4, ..."""
+	steps = sorted({max(8, int(round(top / 2**k))) for k in range(5)})
+	dts, errors = [], []
+	with np.errstate(all="ignore"):
+		for count in steps:
+			grid = np.linspace(0.0, final_time, count + 1)
+			try:
+				error = Richardson_Error(scheme, order, initial, field, grid)
+			except ValueError:
+				continue
+			dts.append(final_time / count)
+			errors.append(float(np.linalg.norm(error[-1])))
+	return np.asarray(dts), np.asarray(errors)
+
+
+# ================================================================================================
+# GUI
+# ================================================================================================
 
 class SatelliteAttitudeApp:
 	"""Three-view Tkinter dashboard backed by the PEI1 numerical modules."""
@@ -48,20 +219,22 @@ class SatelliteAttitudeApp:
 	def __init__(self, root: tk.Tk) -> None:
 		self.root = root
 		self.root.title("PEI 1 | Dinámica de actitud satelital")
-		self.root.geometry("1440x920")
+		self.root.geometry("1480x940")
 		self.root.minsize(1120, 760)
 		self.root.configure(background="#f3f5f4")
 
 		self.inertias = [0.5, 1.0, 1.5]
 		self.omega_degrees = 180.0
 		self.spin_axis = AXIS_NAMES[1]
+		self.log_perturbation = -3.0
 		self.dt = 0.02
-		self.final_time = 12.0
+		self.final_time = 20.0
 		self.scheme_name = "Runge-Kutta 4"
-		self.results: dict[str, Array | float | str] | None = None
+		self.results: dict | None = None
 		self.menu_open = True
 		self.current_page = 0
 		self.animation_object: animation.FuncAnimation | None = None
+		self.animation_paused = False
 		self._redraw_job: str | None = None
 		self._syncing_inertias = False
 
@@ -71,6 +244,7 @@ class SatelliteAttitudeApp:
 		style.configure("TLabel", background="#f3f5f4", foreground="#172b2a")
 		style.configure("Title.TLabel", font=("Segoe UI", 19, "bold"), foreground="#173b38")
 		style.configure("Section.TLabel", font=("Segoe UI", 10, "bold"), foreground="#245b55")
+		style.configure("Info.TLabel", font=("Consolas", 9), foreground="#243b39")
 		style.configure("TButton", padding=(10, 7))
 		style.configure("Accent.TButton", background="#167d73", foreground="white")
 
@@ -144,9 +318,27 @@ class SatelliteAttitudeApp:
 		canvas.get_tk_widget().pack(fill="both", expand=True)
 		return canvas
 
-	def _initial_omega(self) -> Array:
+	def _axis_index(self) -> int:
+		return AXIS_NAMES.index(self.spin_axis)
+
+	def _equilibrium(self) -> Array:
+		"""Equilibrio ω*(k) = Ω e_k (giro puro)."""
 		omega = np.zeros(3, dtype=float)
-		omega[AXIS_NAMES.index(self.spin_axis)] = np.deg2rad(self.omega_degrees)
+		omega[self._axis_index()] = np.deg2rad(self.omega_degrees)
+		return omega
+
+	def _initial_omega(self) -> Array:
+		"""ω(0) = ω*(k) + δω, con δω = ε Ω en las dos componentes transversales.
+
+		Sin δω el giro puro es un punto fijo exacto de las ecuaciones de Euler y ningún
+		esquema se separa de él, por lo que nunca se vería la inestabilidad del eje I2.
+		"""
+		omega = self._equilibrium()
+		rate = np.deg2rad(self.omega_degrees)
+		perturbation = 10.0**self.log_perturbation * rate if self.log_perturbation > -16 else 0.0
+		for index in range(3):
+			if index != self._axis_index():
+				omega[index] = perturbation
 		return omega
 
 	def _schedule_initial_redraw(self, _value: str | None = None) -> None:
@@ -160,6 +352,7 @@ class SatelliteAttitudeApp:
 			return
 		self._draw_satellite(self.initial_axes[0])
 		self._draw_invariant_ellipsoids(self.initial_axes[1])
+		self._update_spectrum_label()
 		self.initial_canvas.draw_idle()
 
 	def _build_initial_page(self) -> None:
@@ -194,8 +387,8 @@ class SatelliteAttitudeApp:
 
 		condition = ttk.Frame(controls)
 		condition.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-		condition.columnconfigure(0, weight=2)
-		condition.columnconfigure(1, weight=1)
+		condition.columnconfigure((0, 1), weight=2)
+		condition.columnconfigure(2, weight=1)
 		self._slider_control(
 			condition,
 			"Ω inicial  (grados/s)",
@@ -205,13 +398,50 @@ class SatelliteAttitudeApp:
 			1.0,
 			self._set_omega,
 		).grid(row=0, column=0, sticky="ew", padx=5)
+		self._slider_control(
+			condition,
+			"Perturbación transversal  log10(ε)   [δω = ε Ω]",
+			self.log_perturbation,
+			-10.0,
+			-1.0,
+			0.1,
+			self._set_perturbation,
+			fmt="{:.1f}",
+		).grid(row=0, column=1, sticky="ew", padx=5)
 		axis_frame = ttk.Frame(condition, padding=(10, 0))
-		axis_frame.grid(row=0, column=1, sticky="ew")
-		ttk.Label(axis_frame, text="Eje del giro puro", style="Section.TLabel").pack(anchor="w")
+		axis_frame.grid(row=0, column=2, sticky="ew")
+		ttk.Label(axis_frame, text="Eje del giro nominal", style="Section.TLabel").pack(anchor="w")
 		self.axis_var = tk.StringVar(value=self.spin_axis)
 		axis_box = ttk.Combobox(axis_frame, textvariable=self.axis_var, values=AXIS_NAMES, state="readonly")
 		axis_box.pack(fill="x", pady=(5, 0))
 		axis_box.bind("<<ComboboxSelected>>", self._set_spin_axis)
+
+		self.spectrum_var = tk.StringVar()
+		ttk.Label(controls, textvariable=self.spectrum_var, style="Info.TLabel", justify="left").grid(
+			row=2, column=0, columnspan=3, sticky="w", padx=5, pady=(10, 0)
+		)
+		self._update_spectrum_label()
+
+	def _update_spectrum_label(self) -> None:
+		if not hasattr(self, "spectrum_var"):
+			return
+		inertia = np.asarray(self.inertias)
+		rate = np.deg2rad(self.omega_degrees)
+		lines = ["Linealización en los equilibrios ω*(k) = Ω e_k  (autovalores de exact_Jacobian):"]
+		for index in range(3):
+			eigenvalues, label = equilibrium_spectrum(inertia, rate, index)
+			eigenvalues = eigenvalues[np.argsort(-np.abs(eigenvalues))][:2]
+			text = ", ".join(f"{value.real:+.3f}{value.imag:+.3f}i" for value in eigenvalues)
+			marker = "▶" if index == self._axis_index() else " "
+			lines.append(f" {marker} ω*({index + 1}) eje I{index + 1}:  λ = {text}  →  {label}")
+		eigenvalues, _ = equilibrium_spectrum(inertia, rate, self._axis_index())
+		growth = float(np.max(eigenvalues.real))
+		epsilon = 10.0**self.log_perturbation
+		if growth > 1e-9:
+			lines.append(
+				f"   Crecimiento e^(λt), λ = {growth:.3f} s⁻¹  ⇒  primer volteo ≈ ln(1/ε)/λ = {np.log(1 / epsilon) / growth:.2f} s"
+			)
+		self.spectrum_var.set("\n".join(lines))
 
 	def _slider_control(
 		self,
@@ -222,11 +452,15 @@ class SatelliteAttitudeApp:
 		upper: float,
 		resolution: float,
 		callback: Callable[[float], None],
+		fmt: str | None = None,
 	) -> ttk.Frame:
+		if fmt is None:
+			decimals = max(0, int(np.ceil(-np.log10(resolution))))
+			fmt = f"{{:.{decimals}f}}"
 		group = ttk.Frame(parent)
 		group.columnconfigure(0, weight=1)
 		ttk.Label(group, text=label, style="Section.TLabel").grid(row=0, column=0, sticky="w")
-		value_var = tk.StringVar(value=f"{value:.2f}")
+		value_var = tk.StringVar(value=fmt.format(value))
 		value_entry = ttk.Entry(group, textvariable=value_var, width=8, justify="right")
 		value_entry.grid(row=0, column=1, sticky="e")
 		scale_var = tk.DoubleVar(value=value)
@@ -241,7 +475,7 @@ class SatelliteAttitudeApp:
 			highlightthickness=0,
 			troughcolor="#d5e3e0",
 			activebackground="#167d73",
-			command=lambda raw: self._slider_changed(raw, value_var, callback),
+			command=lambda raw: self._slider_changed(raw, value_var, callback, fmt),
 		)
 		scale.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 0))
 
@@ -249,11 +483,11 @@ class SatelliteAttitudeApp:
 			try:
 				value = float(value_var.get().replace(",", "."))
 			except ValueError:
-				value_var.set(f"{scale_var.get():.2f}")
+				value_var.set(fmt.format(scale_var.get()))
 				return
 			value = min(upper, max(lower, value))
 			scale_var.set(value)
-			value_var.set(f"{value:.2f}")
+			value_var.set(fmt.format(value))
 			callback(value)
 
 		value_entry.bind("<Return>", commit_entry)
@@ -263,9 +497,9 @@ class SatelliteAttitudeApp:
 		return group
 
 	@staticmethod
-	def _slider_changed(raw: str, value_var: tk.StringVar, callback: Callable[[float], None]) -> None:
+	def _slider_changed(raw: str, value_var: tk.StringVar, callback: Callable[[float], None], fmt: str) -> None:
 		value = float(raw)
-		value_var.set(f"{value:.2f}")
+		value_var.set(fmt.format(value))
 		callback(value)
 
 	def _set_inertia(self, index: int, value: float) -> None:
@@ -299,31 +533,36 @@ class SatelliteAttitudeApp:
 		self.omega_degrees = min(360.0, max(0.0, value))
 		self._schedule_initial_redraw()
 
+	def _set_perturbation(self, value: float) -> None:
+		self.log_perturbation = min(-1.0, max(-10.0, value))
+		self._schedule_initial_redraw()
+
 	def _set_spin_axis(self, _event: tk.Event | None = None) -> None:
 		self.spin_axis = self.axis_var.get()
 		self._schedule_initial_redraw()
 
 	def _draw_satellite(self, axis) -> None:
 		axis.clear()
-		axis.set_title("Satélite y ejes principales", fontsize=11, color="#173b38")
-		dimensions = np.sqrt(np.asarray(self.inertias, dtype=float))
-		dimensions = 0.7 + 0.8 * dimensions / dimensions.max()
-		x, y, z = dimensions / 2
-		vertices = np.array([
-			[-x, -y, -z], [x, -y, -z], [x, y, -z], [-x, y, -z],
-			[-x, -y, z], [x, -y, z], [x, y, z], [-x, y, z],
-		])
-		edges = ((0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7))
-		for first, second in edges:
-			axis.plot(*zip(vertices[first], vertices[second]), color="#23786f", linewidth=2)
-		colors = ("#d95d39", "#167d73", "#3767a5")
-		for index, color in enumerate(colors):
+		inertia = np.asarray(self.inertias, dtype=float)
+		title = "Satélite (bus ∝ caja con I1, I2, I3) y ejes principales"
+		if inertia[2] >= inertia[0] + inertia[1]:
+			title += "\nI3 ≥ I1 + I2: no realizable como sólido (se dibuja con espesor mínimo)"
+		axis.set_title(title, fontsize=10, color="#173b38")
+		faces, base_colors, struts = satellite_model(inertia)
+		axis.add_collection3d(Poly3DCollection(
+			faces, facecolors=shaded_colors(faces, base_colors), edgecolors=(0.1, 0.1, 0.1, 0.35), linewidths=0.4,
+		))
+		axis.plot(*struts.T, color="#555555", linewidth=1.4)
+		extent = 1.35
+		for index, color in enumerate(AXIS_COLORS):
 			vector = np.zeros(3)
-			vector[index] = dimensions[index] * 0.9
-			axis.quiver(0, 0, 0, *vector, color=color, linewidth=1.8, arrow_length_ratio=0.12)
-			label_position = vector * 1.12
-			axis.text(*label_position, f"I{index + 1}", color=color, fontsize=10)
-		extent = max(dimensions) * 0.85
+			vector[index] = extent * 0.95
+			axis.plot(*zip(np.zeros(3), vector), color=color, linewidth=2.0)
+			axis.text(*(vector * 1.06), f"e{index + 1} (I{index + 1})", color=color, fontsize=9)
+		spin = np.zeros(3)
+		spin[self._axis_index()] = extent * 0.75
+		axis.quiver(0, 0, 0, *spin, color="#111111", linewidth=1.6, arrow_length_ratio=0.15)
+		axis.text(*(spin * 0.55 + np.array([0.08, 0.08, 0.08])), "Ω", color="#111111", fontsize=11)
 		axis.set(xlim=(-extent, extent), ylim=(-extent, extent), zlim=(-extent, extent))
 		axis.set_xlabel("Eje 1")
 		axis.set_ylabel("Eje 2")
@@ -333,32 +572,28 @@ class SatelliteAttitudeApp:
 
 	def _draw_invariant_ellipsoids(self, axis) -> None:
 		axis.clear()
-		axis.set_title("Elipsoides de energía y momento", fontsize=11, color="#173b38")
+		axis.set_title("Elipsoides 2T y L², separatriz y equilibrios", fontsize=10, color="#173b38")
 		inertia = np.asarray(self.inertias)
 		omega = self._initial_omega()
 		energy = 2 * float(T(*self.inertias, omega))
 		momentum = float(L(*self.inertias, omega))
 		if energy > 0 and momentum > 0:
-			u = np.linspace(0, 2 * np.pi, 36)
-			v = np.linspace(0, np.pi, 24)
-			unit_x = np.outer(np.cos(u), np.sin(v))
-			unit_y = np.outer(np.sin(u), np.sin(v))
-			unit_z = np.outer(np.ones_like(u), np.cos(v))
 			energy_radii = np.sqrt(energy / inertia)
 			momentum_radii = momentum / inertia
-			axis.plot_surface(
-				unit_x * energy_radii[0], unit_y * energy_radii[1], unit_z * energy_radii[2],
-				color="#e09b49", alpha=0.22, linewidth=0, shade=True,
-			)
-			axis.plot_surface(
-				unit_x * momentum_radii[0], unit_y * momentum_radii[1], unit_z * momentum_radii[2],
-				color="#167d73", alpha=0.25, linewidth=0, shade=True,
-			)
+			axis.plot_surface(*ellipsoid(energy_radii, 36, 24), color="#e09b49", alpha=0.22, linewidth=0, shade=True)
+			axis.plot_surface(*ellipsoid(momentum_radii, 36, 24), color="#167d73", alpha=0.20, linewidth=0, shade=True)
 			axis.plot([], [], [], color="#e09b49", label="Energía 2T")
-			axis.plot([], [], [], color="#167d73", label="Momento |L|")
+			axis.plot([], [], [], color="#167d73", label="Momento L²")
+			for index, curve in enumerate(separatrix_curves(inertia, momentum)):
+				axis.plot(*curve.T, color="#c34c32", linestyle="--", linewidth=1.1, label="Separatriz" if index == 0 else None)
+			for index, color in enumerate(AXIS_COLORS):
+				points = np.zeros((2, 3))
+				points[:, index] = (momentum / inertia[index], -momentum / inertia[index])
+				axis.scatter(*points.T, color=color, s=22, depthshade=False)
+			axis.scatter(*omega, color="#111111", s=30, marker="*", depthshade=False, label="ω(0)")
 			axis.legend(loc="upper left", fontsize=8)
 			extent = 1.15 * max(float(np.max(energy_radii)), float(np.max(momentum_radii)))
-			for index, color in enumerate(("#d95d39", "#167d73", "#3767a5")):
+			for index, color in enumerate(AXIS_COLORS):
 				vector = np.zeros(3)
 				vector[index] = extent * 0.78
 				axis.quiver(0, 0, 0, *vector, color=color, arrow_length_ratio=0.1)
@@ -424,13 +659,16 @@ class SatelliteAttitudeApp:
 		y = np.linspace(-4.0, 4.0, 180)
 		xx, yy = np.meshgrid(x, y)
 		z = xx + 1j * yy
+		# Factores de amplificación R(z) de la ecuación test u' = λu con z = λΔt.
 		amplifications = (
 			1 + z,
 			(1 + z / 2) / (1 - z / 2),
 			1 + z + z**2 / 2 + z**3 / 6 + z**4 / 24,
 		)
-		jacobian = exact_Jacobian(*self.inertias, self._initial_omega())
-		eigenvalues = np.linalg.eigvals(jacobian) * self.dt
+		eigenvalues, label = equilibrium_spectrum(
+			np.asarray(self.inertias), np.deg2rad(self.omega_degrees), self._axis_index()
+		)
+		points = eigenvalues * self.dt
 		for axis, name, amplification in zip(self.stability_axes, SCHEMES, amplifications):
 			axis.clear()
 			stable = np.abs(amplification) <= 1.0
@@ -438,11 +676,26 @@ class SatelliteAttitudeApp:
 			axis.contour(xx, yy, np.abs(amplification), levels=[1.0], colors=["#203b38"], linewidths=1.1)
 			axis.axhline(0, color="#879794", linewidth=0.7)
 			axis.axvline(0, color="#879794", linewidth=0.7)
-			axis.scatter(eigenvalues.real, eigenvalues.imag, color="#c34c32", marker="x", s=48, label="λ(exact_Jacobian) Δt")
-			axis.set(title=name, xlabel="Re(z)", ylabel="Im(z)", xlim=(-5, 3), ylim=(-4, 4), aspect="equal")
+			axis.scatter(points.real, points.imag, color="#c34c32", marker="x", s=48, label="λ(J(ω*)) Δt")
+			ratios = {
+				"Euler": np.abs(1 + points),
+				"Crank-Nicolson": np.abs((1 + points / 2) / (1 - points / 2)),
+				"Runge-Kutta 4": np.abs(1 + points + points**2 / 2 + points**3 / 6 + points**4 / 24),
+			}[name]
+			axis.set(
+				title=f"{name}\nmax |R(λΔt)| = {np.max(ratios):.6f}",
+				xlabel="Re(z)", ylabel="Im(z)", xlim=(-5, 3), ylim=(-4, 4), aspect="equal",
+			)
 			axis.grid(alpha=0.16)
 			axis.legend(loc="lower left", fontsize=7)
+		self.stability_figure.suptitle(
+			f"Equilibrio ω*({self._axis_index() + 1}) · {label} · Δt = {self.dt:.3f} s", fontsize=11, color="#173b38"
+		)
 		self.stability_canvas.draw_idle()
+
+	# --------------------------------------------------------------------------------------------
+	# Integration
+	# --------------------------------------------------------------------------------------------
 
 	def _execute(self) -> None:
 		try:
@@ -451,185 +704,376 @@ class SatelliteAttitudeApp:
 				raise ValueError("t_f debe ser un número positivo.")
 			if self.dt <= 0:
 				raise ValueError("Δt debe ser positivo.")
-			self.scheme_name = self.scheme_var.get()
-			scheme, order = SCHEMES[self.scheme_name]
 			initial = self._initial_omega()
 			if np.linalg.norm(initial) == 0:
 				raise ValueError("Selecciona Ω > 0 para integrar el movimiento.")
 			steps = max(1, int(np.ceil(final_time / self.dt)))
-			if steps > 20000:
-				raise ValueError("La combinación t_f/Δt supera 20 000 pasos.")
-			times = np.linspace(0.0, final_time, steps + 1)
-			field = lambda omega, _time: Euler_Equations(*self.inertias, omega)
-			solution, times = Cauchy_Problem(scheme, initial, field, times)
-			error = Richardson_Error(scheme, order, initial, field, times)
+			if steps > MAX_STEPS:
+				raise ValueError(f"La combinación t_f/Δt supera {MAX_STEPS} pasos.")
+			self.scheme_name = self.scheme_var.get()
 			self.final_time = final_time
+			self.root.configure(cursor="watch")
+			self.root.update_idletasks()
+			inertias = np.asarray(self.inertias, dtype=float).copy()
+			times = np.linspace(0.0, final_time, steps + 1)
 			self.results = {
-				"solution": solution,
 				"times": times,
-				"error": error,
 				"initial": initial,
-				"inertias": np.asarray(self.inertias, dtype=float).copy(),
-				"scheme": self.scheme_name,
+				"inertias": inertias,
+				"axis_index": self._axis_index(),
 				"dt": float(times[1] - times[0]),
+				"field": lambda omega, _time: Euler_Equations(*inertias, omega),
+				"runs": {},
 			}
+			# Se integran los tres esquemas para poder conmutar entre ellos y comparar derivas.
+			for name in SCHEMES:
+				self._run_scheme(name)
+			if self.results["runs"][self.scheme_name].get("failed"):
+				raise ValueError(self.results["runs"][self.scheme_name]["failed"])
 			self.show_page(2)
 		except (ValueError, FloatingPointError, np.linalg.LinAlgError) as error:
 			messagebox.showerror("No se pudo integrar", str(error), parent=self.root)
+		finally:
+			self.root.configure(cursor="")
+
+	def _run_scheme(self, name: str) -> dict:
+		"""Cauchy_Problem con un esquema + invariantes 2T y L² + actitud. Se guarda en caché."""
+		assert self.results is not None
+		runs = self.results["runs"]
+		if name in runs:
+			return runs[name]
+		scheme, _order = SCHEMES[name]
+		times = self.results["times"]
+		inertia = self.results["inertias"]
+		try:
+			with np.errstate(all="ignore"):
+				solution, _ = Cauchy_Problem(scheme, self.results["initial"], self.results["field"], times)
+		except (ValueError, np.linalg.LinAlgError) as error:
+			runs[name] = {"failed": f"{name}: {error}"}
+			return runs[name]
+		valid = first_invalid(solution)
+		solution, run_times = solution[:valid], times[:valid]
+		energy = 2 * np.array([T(*inertia, omega) for omega in solution])
+		momentum = np.array([L(*inertia, omega) for omega in solution]) ** 2
+		runs[name] = {
+			"solution": solution,
+			"times": run_times,
+			"diverged": valid < len(times),
+			"energy_drift": relative_drift(energy),
+			"momentum_drift": relative_drift(momentum),
+			"rotations": propagate_attitude(solution, run_times),
+		}
+		return runs[name]
+
+	def _richardson(self, name: str) -> dict:
+		"""Error de Richardson en el tiempo y estudio de convergencia (perezoso, en caché)."""
+		assert self.results is not None
+		run = self.results["runs"][name]
+		if "richardson" in run:
+			return run
+		scheme, order = SCHEMES[name]
+		times = self.results["times"]
+		with np.errstate(all="ignore"):
+			try:
+				error = Richardson_Error(scheme, order, self.results["initial"], self.results["field"], times)
+			except ValueError:
+				error = np.full((len(times), 3), np.nan)
+		top = len(times) - 1 if name != "Crank-Nicolson" else min(len(times) - 1, 1600)
+		dts, errors = convergence_study(scheme, order, self.results["initial"], self.results["field"], float(times[-1]), max(top, 16))
+		run["richardson"] = error
+		run["convergence"] = (dts, errors)
+		return run
+
+	# --------------------------------------------------------------------------------------------
+	# Results page
+	# --------------------------------------------------------------------------------------------
 
 	def _build_results_page(self) -> None:
 		if self.results is None:
-			ttk.Label(self.content, text="Configura los parámetros y pulsa «Ejecutar».").grid(
+			ttk.Label(self.content, text="Configura los parámetros y pulsa «Ejecutar» en «Esquemas Numéricos».").grid(
 				row=1, column=0, sticky="nw"
 			)
 			return
-		solution = np.asarray(self.results["solution"])
-		times = np.asarray(self.results["times"])
-		error = np.asarray(self.results["error"])
-		inertia = np.asarray(self.results["inertias"])
-		figure = Figure(figsize=(13.0, 7.8), dpi=95, facecolor="#f3f5f4", constrained_layout=True)
-		grid = figure.add_gridspec(2, 6, height_ratios=(1.15, 0.85))
-		phase_axis = figure.add_subplot(grid[0, 0:2], projection="3d")
-		attitude_axis = figure.add_subplot(grid[0, 2:4], projection="3d")
-		error_axis = figure.add_subplot(grid[0, 4:6])
-		energy_axis = figure.add_subplot(grid[1, 0:3])
-		momentum_axis = figure.add_subplot(grid[1, 3:6])
-		self._draw_phase_portrait(phase_axis, solution, times, inertia)
-		self._draw_invariants(energy_axis, momentum_axis, solution, times, inertia)
-		error_norm = np.linalg.norm(error, axis=1)
-		error_axis.plot(times, error_norm, color="#c34c32", linewidth=1.6)
-		error_axis.set(title="Error de Richardson", xlabel="Tiempo (s)", ylabel="||e_R|| (rad/s)")
-		error_axis.grid(alpha=0.22)
-		figure.suptitle(f"{self.results['scheme']}  |  Δt = {float(self.results['dt']):.4g} s", color="#173b38", fontsize=13)
-		chart_frame = ttk.Frame(self.content)
-		chart_frame.grid(row=1, column=0, sticky="nsew")
-		self._make_canvas(chart_frame, figure)
-		self._animate_attitude(attitude_axis, solution, times, inertia)
+		toolbar = ttk.Frame(self.content)
+		toolbar.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+		ttk.Label(toolbar, text="Esquema visualizado", style="Section.TLabel").pack(side="left")
+		self.view_scheme_var = tk.StringVar(value=self.scheme_name)
+		selector = ttk.Combobox(
+			toolbar, textvariable=self.view_scheme_var, values=tuple(SCHEMES), state="readonly", width=18
+		)
+		selector.pack(side="left", padx=(8, 16))
+		selector.bind("<<ComboboxSelected>>", self._switch_scheme)
+		self.pause_button = ttk.Button(toolbar, text="Pausa", command=self._toggle_animation)
+		self.pause_button.pack(side="left")
+		self.summary_var = tk.StringVar()
+		ttk.Label(toolbar, textvariable=self.summary_var, style="Info.TLabel").pack(side="left", padx=16)
+		self.content.rowconfigure(1, weight=0)
+		self.content.rowconfigure(2, weight=1)
+		self.results_frame = ttk.Frame(self.content)
+		self.results_frame.grid(row=2, column=0, sticky="nsew")
+		self._render_results()
 
-	def _draw_phase_portrait(self, axis, solution: Array, times: Array, inertia: Array) -> None:
-		axis.set_title("Espacio de fases y superficies de Poinsot", fontsize=10)
+	def _switch_scheme(self, _event: tk.Event | None = None) -> None:
+		self.scheme_name = self.view_scheme_var.get()
+		run = self._run_scheme(self.scheme_name)
+		if run.get("failed"):
+			messagebox.showerror("Esquema no disponible", run["failed"], parent=self.root)
+			return
+		self._render_results()
+
+	def _toggle_animation(self) -> None:
+		if self.animation_object is None:
+			return
+		if self.animation_paused:
+			self.animation_object.resume()
+			self.pause_button.configure(text="Pausa")
+		else:
+			self.animation_object.pause()
+			self.pause_button.configure(text="Reanudar")
+		self.animation_paused = not self.animation_paused
+
+	def _render_results(self) -> None:
+		if self.animation_object is not None:
+			self.animation_object.event_source.stop()
+			self.animation_object = None
+		self.animation_paused = False
+		self.pause_button.configure(text="Pausa")
+		for child in self.results_frame.winfo_children():
+			child.destroy()
+		assert self.results is not None
+		name = self.scheme_name
+		run = self._richardson(name)
+		_, order = SCHEMES[name]
+		solution = run["solution"]
+		times = run["times"]
+		inertia = self.results["inertias"]
+
+		# Dos lienzos: el satélite se repinta en cada fotograma; el análisis solo actualiza
+		# por blitting el marcador de fases y los cursores temporales (sin repintar superficies).
+		self.results_frame.rowconfigure(0, weight=1)
+		self.results_frame.columnconfigure(0, weight=3, uniform="results")
+		self.results_frame.columnconfigure(1, weight=7, uniform="results")
+		attitude_figure = Figure(figsize=(4.4, 7.6), dpi=92, facecolor="#f3f5f4", constrained_layout=True)
+		attitude_grid = attitude_figure.add_gridspec(2, 1, height_ratios=(1.9, 1.0))
+		attitude_axis = attitude_figure.add_subplot(attitude_grid[0], projection="3d")
+		angle_axis = attitude_figure.add_subplot(attitude_grid[1])
+		figure = Figure(figsize=(9.6, 7.6), dpi=92, facecolor="#f3f5f4", constrained_layout=True)
+		grid = figure.add_gridspec(2, 4, height_ratios=(1.2, 0.9))
+		phase_axis = figure.add_subplot(grid[0, 0:2], projection="3d")
+		omega_axis = figure.add_subplot(grid[0, 2:4])
+		error_axis = figure.add_subplot(grid[1, 0])
+		convergence_axis = figure.add_subplot(grid[1, 1])
+		energy_axis = figure.add_subplot(grid[1, 2])
+		momentum_axis = figure.add_subplot(grid[1, 3])
+
+		marker = self._draw_phase_portrait(phase_axis, solution, inertia)
+		cursors = [self._draw_omega(omega_axis, solution, times)]
+		cursors.append(self._draw_richardson(error_axis, run["richardson"][: len(times)], times, order))
+		self._draw_convergence(convergence_axis, *run["convergence"], order)
+		cursors.extend(self._draw_invariants(energy_axis, momentum_axis, name))
+
+		divergence = "  ·  ¡divergió numéricamente!" if run["diverged"] else ""
+		figure.suptitle(
+			f"{name} (orden {order})  |  Δt = {float(self.results['dt']):.4g} s  |  ε = 10^{self.log_perturbation:.1f}{divergence}",
+			color="#173b38", fontsize=12,
+		)
+		axis_index = self.results["axis_index"]
+		flips = np.count_nonzero(np.diff(np.sign(solution[:, axis_index])) != 0)
+		self.summary_var.set(
+			f"Cambios de signo de ω{axis_index + 1}: {flips}   ·   "
+			f"max ΔT/T0 = {np.nanmax(run['energy_drift']) if np.any(np.isfinite(run['energy_drift'])) else 0:.2e}   ·   "
+			f"max ΔL²/L0² = {np.nanmax(run['momentum_drift']) if np.any(np.isfinite(run['momentum_drift'])) else 0:.2e}"
+		)
+		for frame_column, current in enumerate((attitude_figure, figure)):
+			holder = ttk.Frame(self.results_frame)
+			holder.grid(row=0, column=frame_column, sticky="nsew")
+			holder.pack_propagate(False)
+			# Tamaño pedido mínimo: el reparto lo decide la rejilla, no figsize (evita bucles de resize).
+			self._make_canvas(holder, current).get_tk_widget().configure(width=1, height=1)
+		self._animate_attitude(attitude_axis, angle_axis, run, inertia, [marker, *cursors])
+
+	def _draw_phase_portrait(self, axis, solution: Array, inertia: Array):
+		axis.set_title("Espacio de fases (ω1, ω2, ω3) y superficies de Poinsot", fontsize=10)
 		initial = np.asarray(self.results["initial"])
 		energy = 2 * float(T(*inertia, initial))
 		momentum = float(L(*inertia, initial))
 		if energy > 0 and momentum > 0:
-			u = np.linspace(0, 2 * np.pi, 32)
-			v = np.linspace(0, np.pi, 20)
-			unit_x = np.outer(np.cos(u), np.sin(v))
-			unit_y = np.outer(np.sin(u), np.sin(v))
-			unit_z = np.outer(np.ones_like(u), np.cos(v))
 			energy_radii = np.sqrt(energy / inertia)
 			momentum_radii = momentum / inertia
-			axis.plot_surface(unit_x * energy_radii[0], unit_y * energy_radii[1], unit_z * energy_radii[2], color="#e09b49", alpha=0.12, linewidth=0)
-			axis.plot_surface(unit_x * momentum_radii[0], unit_y * momentum_radii[1], unit_z * momentum_radii[2], color="#167d73", alpha=0.13, linewidth=0)
-			separatrix = self._separatrix(inertia, momentum, times, float(self.results["dt"]))
-			if separatrix is not None:
-				axis.plot(*separatrix.T, color="#c34c32", linewidth=1.0, linestyle="--", label="Separatriz crítica")
-		axis.plot(*solution.T, color="#173b38", linewidth=1.3, label="Cauchy problem")
+			axis.plot_surface(*ellipsoid(energy_radii), color="#e09b49", alpha=0.10, linewidth=0)
+			axis.plot_surface(*ellipsoid(momentum_radii), color="#167d73", alpha=0.11, linewidth=0)
+			for index, curve in enumerate(separatrix_curves(inertia, momentum)):
+				axis.plot(*curve.T, color="#c34c32", linewidth=1.0, linestyle="--", label="Separatriz crítica" if index == 0 else None)
+			for index, color in enumerate(AXIS_COLORS):
+				points = np.zeros((2, 3))
+				points[:, index] = (momentum / inertia[index], -momentum / inertia[index])
+				axis.scatter(*points.T, color=color, s=18, depthshade=False)
+			extent = 1.1 * float(np.max(momentum_radii))
+			axis.set(xlim=(-extent, extent), ylim=(-extent, extent), zlim=(-extent, extent))
+		axis.plot(*solution.T, color="#173b38", linewidth=1.2, label="Polhodia ω(t)")
+		(marker,) = axis.plot(*solution[0], marker="o", color="#c34c32", markersize=6, linestyle="")
 		axis.set_xlabel("ω1 (rad/s)")
 		axis.set_ylabel("ω2 (rad/s)")
 		axis.set_zlabel("ω3 (rad/s)")
 		axis.set_box_aspect((1, 1, 1))
 		axis.legend(fontsize=7, loc="upper left")
-
-	def _separatrix(self, inertia: Array, momentum: float, times: Array, dt: float) -> Array | None:
-		if momentum <= 1e-12:
-			return None
-		i1, i2, i3 = inertia
-		omega1 = max(momentum / i1 * 1e-3, 1e-7)
-		omega3 = np.sqrt(i1 * (i2 - i1) / (i3 * (i3 - i2))) * omega1
-		omega2_squared = (momentum**2 - (i1 * omega1) ** 2 - (i3 * omega3) ** 2) / i2**2
-		if omega2_squared <= 0:
-			return None
-		seed = np.array([omega1, np.sqrt(omega2_squared), omega3], dtype=float)
-		horizon = max(float(times[-1]), 1.0) * 1.5
-		count = min(2400, max(400, int(np.ceil(horizon / max(dt, 1e-4)))))
-		sep_times = np.linspace(0.0, horizon, count + 1)
-		field = lambda omega, _time: Euler_Equations(*inertia, omega)
-		try:
-			curve, _ = Cauchy_Problem(RK4, seed, field, sep_times)
-			return curve
-		except (ValueError, FloatingPointError):
-			return None
-
-	def _draw_invariants(
-		self,
-		energy_axis,
-		momentum_axis,
-		solution: Array,
-		times: Array,
-		inertia: Array,
-	) -> None:
-		energies = np.array([T(*inertia, omega) for omega in solution])
-		momenta = np.array([L(*inertia, omega) for omega in solution])
-		energy_axis.plot(times, energies, color="#d28a39", linewidth=1.4)
-		energy_axis.set(title="Energía cinética T(t)", xlabel="Tiempo (s)", ylabel="T (J)")
-		energy_axis.grid(alpha=0.22)
-		momentum_axis.plot(times, momenta, color="#167d73", linewidth=1.4)
-		momentum_axis.set(title="Módulo del momento |L(t)|", xlabel="Tiempo (s)", ylabel="|L| (kg m²/s)")
-		momentum_axis.grid(alpha=0.22)
+		return marker
 
 	@staticmethod
-	def _rotation_increment(rotation_vector: Array) -> Array:
-		angle = float(np.linalg.norm(rotation_vector))
-		if angle < 1e-12:
-			return np.eye(3)
-		x, y, z = rotation_vector / angle
-		skew = np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]])
-		return np.eye(3) + np.sin(angle) * skew + (1 - np.cos(angle)) * (skew @ skew)
+	def _draw_omega(axis, solution: Array, times: Array):
+		for index, color in enumerate(AXIS_COLORS):
+			axis.plot(times, solution[:, index], color=color, linewidth=1.3, label=f"ω{index + 1}")
+		axis.set(title="Velocidad angular en ejes cuerpo ω(t)", xlabel="Tiempo (s)", ylabel="ω (rad/s)")
+		axis.grid(alpha=0.22)
+		axis.legend(fontsize=7, loc="upper right", ncol=3)
+		return axis.axvline(times[0], color="#111111", linewidth=0.8, alpha=0.6)
 
-	def _animate_attitude(self, axis, solution: Array, times: Array, inertia: Array) -> None:
-		axis.set_title("Orientación del satélite", fontsize=10)
-		axis.set(xlim=(-1.8, 1.8), ylim=(-1.8, 1.8), zlim=(-1.8, 1.8))
+	@staticmethod
+	def _draw_richardson(axis, error: Array, times: Array, order: int):
+		with np.errstate(divide="ignore", invalid="ignore"):
+			for index, color in enumerate(AXIS_COLORS):
+				component = np.abs(error[:, index])
+				axis.semilogy(times, np.where(component > 0, component, np.nan), color=color, linewidth=0.9, alpha=0.75, label=f"|E{index + 1}|")
+			total = np.linalg.norm(error, axis=1)
+			axis.semilogy(times, np.where(total > 0, total, np.nan), color="#111111", linewidth=1.4, label="‖E‖")
+		axis.set(
+			title=f"Error de Richardson\nE = (U_Δt/2 − U_Δt) / (1 − 2^−{order})",
+			xlabel="Tiempo (s)", ylabel="Error estimado (rad/s)",
+		)
+		axis.title.set_fontsize(9)
+		axis.grid(alpha=0.22, which="both")
+		axis.legend(fontsize=7, loc="lower right", ncol=2)
+		return axis.axvline(times[0], color="#111111", linewidth=0.8, alpha=0.6)
+
+	@staticmethod
+	def _draw_convergence(axis, dts: Array, errors: Array, order: int) -> None:
+		mask = np.isfinite(errors) & (errors > 1e-14)
+		axis.loglog(dts[mask], errors[mask], "o-", color="#173b38", linewidth=1.3, label="‖E(t_f)‖ Richardson")
+		title = "Convergencia (Richardson en t_f)"
+		if np.count_nonzero(mask) >= 2:
+			slope = np.polyfit(np.log10(dts[mask]), np.log10(errors[mask]), 1)[0]
+			reference = errors[mask][-1] * (dts[mask] / dts[mask][-1]) ** order
+			axis.loglog(dts[mask], reference, "--", color="#c34c32", linewidth=1.0, label=f"pendiente teórica q = {order}")
+			title += f"\npendiente ajustada ≈ {slope:.2f}"
+		axis.set(title=title, xlabel="Δt (s)", ylabel="‖E(t_f)‖")
+		if np.any(mask):
+			axis.set_xticks(dts[mask], [f"{value:.3g}" for value in dts[mask]], minor=False, fontsize=7, rotation=35)
+			axis.minorticks_off()
+		axis.title.set_fontsize(9)
+		axis.grid(alpha=0.22, which="both")
+		axis.legend(fontsize=7, loc="upper left")
+
+	def _draw_invariants(self, energy_axis, momentum_axis, selected: str) -> list:
+		for name in SCHEMES:
+			run = self.results["runs"].get(name)
+			if run is None or run.get("failed"):
+				continue
+			width, alpha = (1.8, 1.0) if name == selected else (0.9, 0.55)
+			energy_axis.semilogy(run["times"], run["energy_drift"], color=SCHEME_COLORS[name], linewidth=width, alpha=alpha, label=name)
+			momentum_axis.semilogy(run["times"], run["momentum_drift"], color=SCHEME_COLORS[name], linewidth=width, alpha=alpha, label=name)
+		energy_axis.set(title="Deriva de energía ΔT(t)\n|2T(t) − 2T₀| / 2T₀", xlabel="Tiempo (s)", ylabel="ΔT relativa")
+		momentum_axis.set(title="Deriva de momento ΔL(t)\n|L²(t) − L₀²| / L₀²", xlabel="Tiempo (s)", ylabel="ΔL relativa")
+		cursors = []
+		for axis in (energy_axis, momentum_axis):
+			axis.title.set_fontsize(9)
+			axis.grid(alpha=0.22, which="both")
+			axis.legend(fontsize=7, loc="lower right")
+			cursors.append(axis.axvline(0.0, color="#111111", linewidth=0.8, alpha=0.6))
+		return cursors
+
+	def _animate_attitude(self, axis, angle_axis, run: dict, inertia: Array, synced: list) -> None:
+		solution, times, rotations = run["solution"], run["times"], run["rotations"]
+		marker, *cursors = synced
+		analysis_figure = marker.axes.figure
+		analysis_canvas = analysis_figure.canvas
+		background: dict = {}
+		for artist in synced:
+			artist.set_animated(True)
+
+		def blit_synced() -> None:
+			if "image" not in background:
+				return
+			analysis_canvas.restore_region(background["image"])
+			for artist in synced:
+				artist.axes.draw_artist(artist)
+			analysis_canvas.blit(analysis_figure.bbox)
+
+		def capture_background(_event) -> None:
+			background["image"] = analysis_canvas.copy_from_bbox(analysis_figure.bbox)
+			blit_synced()
+
+		analysis_canvas.mpl_connect("draw_event", capture_background)
+		axis_index = self.results["axis_index"]
+		extent = 1.35
+		axis.set(xlim=(-extent, extent), ylim=(-extent, extent), zlim=(-extent, extent))
 		axis.set_box_aspect((1, 1, 1))
-		axis.set_xlabel("X")
-		axis.set_ylabel("Y")
-		axis.set_zlabel("Z")
-		axis.view_init(elev=24, azim=35)
-		dimensions = np.sqrt(inertia)
-		dimensions = 0.7 + 0.7 * dimensions / dimensions.max()
-		half = dimensions / 2
-		vertices = np.array([
-			[-half[0], -half[1], -half[2]], [half[0], -half[1], -half[2]],
-			[half[0], half[1], -half[2]], [-half[0], half[1], -half[2]],
-			[-half[0], -half[1], half[2]], [half[0], -half[1], half[2]],
-			[half[0], half[1], half[2]], [-half[0], half[1], half[2]],
-		])
-		edges = ((0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7))
-		stride = max(1, len(times) // 360)
+		axis.set_xlabel("X inercial")
+		axis.set_ylabel("Y inercial")
+		axis.set_zlabel("Z inercial")
+		axis.view_init(elev=22, azim=35)
+
+		faces, base_colors, struts = satellite_model(inertia)
+		body = Poly3DCollection(faces, edgecolors=(0.1, 0.1, 0.1, 0.35), linewidths=0.4)
+		axis.add_collection3d(body)
+		(strut_line,) = axis.plot([], [], [], color="#555555", linewidth=1.4)
+		axis_lines = [axis.plot([], [], [], color=color, linewidth=2.0, label=f"e{i + 1}")[0] for i, color in enumerate(AXIS_COLORS)]
+		(trace,) = axis.plot([], [], [], color=AXIS_COLORS[axis_index], linewidth=0.8, alpha=0.55)
+		# L es constante en ejes inerciales: L_in = R(0) I ω(0) con R(0) = Id.
+		momentum = inertia * solution[0]
+		momentum_dir = momentum / np.linalg.norm(momentum) * extent * 0.95
+		axis.plot(*zip(-momentum_dir, momentum_dir), color="#111111", linestyle="--", linewidth=1.0, label="L (inercial, fijo)")
+		axis.legend(fontsize=7, loc="upper left")
+
+		stride = max(1, len(times) // 480)
 		frame_indices = np.arange(0, len(times), stride)
 		if frame_indices[-1] != len(times) - 1:
 			frame_indices = np.append(frame_indices, len(times) - 1)
-		rotations = []
-		rotation = np.eye(3)
-		frame_set = set(frame_indices.tolist())
-		for index in range(len(times)):
-			if index in frame_set:
-				rotations.append(rotation.copy())
-			if index + 1 < len(times):
-				rotation = rotation @ self._rotation_increment(solution[index] * (times[index + 1] - times[index]))
+		tips = rotations[:, :, axis_index] * extent * 0.95
+		# Ángulo entre el eje nominal de giro (en inercial) y L: 0° ↔ 180° en cada volteo.
+		angles = np.degrees(np.arccos(np.clip(rotations[:, :, axis_index] @ (momentum_dir / np.linalg.norm(momentum_dir)), -1, 1)))
+		angle_axis.plot(times, angles, color=AXIS_COLORS[axis_index], linewidth=1.4)
+		angle_axis.set(
+			title=f"Ángulo entre e{axis_index + 1} y L (inercial)", xlabel="Tiempo (s)", ylabel="grados",
+			ylim=(-5, 185), yticks=(0, 45, 90, 135, 180),
+		)
+		angle_axis.title.set_fontsize(9)
+		angle_axis.grid(alpha=0.22)
+		angle_cursor = angle_axis.axvline(times[0], color="#111111", linewidth=0.8, alpha=0.6)
 
 		def draw_frame(frame: int):
-			for artist in list(axis.collections) + list(axis.lines):
-				artist.remove()
-			rotated = vertices @ rotations[frame].T
-			for first, second in edges:
-				axis.plot(*zip(rotated[first], rotated[second]), color="#167d73", linewidth=2)
-			for index, color in enumerate(("#d95d39", "#167d73", "#3767a5")):
-				vector = rotations[frame] @ np.eye(3)[index] * 1.15
-				axis.quiver(0, 0, 0, *vector, color=color, arrow_length_ratio=0.12)
-			axis.set_title(f"Orientación del satélite · t = {times[frame_indices[frame]]:.2f} s", fontsize=10)
-			return axis.lines
+			step = frame_indices[frame]
+			rotation = rotations[step]
+			rotated = [face @ rotation.T for face in faces]
+			body.set_verts(rotated)
+			body.set_facecolor(shaded_colors(rotated, base_colors))
+			moved = struts @ rotation.T
+			strut_line.set_data_3d(moved[:, 0], moved[:, 1], moved[:, 2])
+			for index, line in enumerate(axis_lines):
+				tip = rotation[:, index] * extent * 0.95
+				line.set_data_3d([0, tip[0]], [0, tip[1]], [0, tip[2]])
+			trace.set_data_3d(tips[: step + 1, 0], tips[: step + 1, 1], tips[: step + 1, 2])
+			marker.set_data_3d([solution[step, 0]], [solution[step, 1]], [solution[step, 2]])
+			for cursor in (*cursors, angle_cursor):
+				cursor.set_xdata([times[step], times[step]])
+			axis.set_title(
+				f"Orientación del satélite · t = {times[step]:.2f} s\nángulo(e{axis_index + 1}, L) = {angles[step]:5.1f}°",
+				fontsize=10,
+			)
+			if frame % 2 == 0:
+				blit_synced()
+			return [body, strut_line, trace, angle_cursor, *axis_lines]
 
 		draw_frame(0)
+		analysis_canvas.draw_idle()
 		self.animation_object = animation.FuncAnimation(
 			axis.figure,
 			draw_frame,
 			frames=len(frame_indices),
-			interval=45,
+			interval=40,
 			blit=False,
 			repeat=True,
 		)
-		axis.figure.canvas.draw()
+		axis.figure.canvas.draw_idle()
 
 
 def main() -> None:
