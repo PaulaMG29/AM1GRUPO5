@@ -21,10 +21,6 @@ def Euler_Equations(omega: array, t:array) -> array:
     
     return array([d_omega1_dt, d_omega2_dt, d_omega3_dt])
 
-omega= array([2.,3.,4.])
-t=linspace(0.,20.,100)
-print(Euler_Equations(omega,t))
-
 def exact_Jacobian(I1: float, I2: float, I3: float, omega: array) -> array:
     """
     Calcula la matriz jacobiana de las ecuaciones de Euler para un cuerpo rígido en rotación.
