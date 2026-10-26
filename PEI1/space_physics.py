@@ -1,7 +1,13 @@
-from numpy import array
+from numpy import array, linspace
 from numpy.linalg import norm
 
-def Euler_Equations(I1: float, I2: float, I3: float, omega: array) -> array:
+# Las inercias se dan en el código de gui_reactive.py, son inputs del usuario.
+# Aquí solo hay valores por defecto: la GUI los sobrescribe (space_physics.I1 = ...)
+# antes de integrar, para que Euler_Equations(omega, t) entre directamente en Cauchy_Problem.
+I1, I2, I3 = 0.5, 1.0, 1.5
+
+#def Euler_Equations(I1: float, I2: float, I3: float, omega: array) -> array:
+def Euler_Equations(omega: array, t:array) -> array:
     """
     Ecuaciones de Euler para un cuerpo rígido en rotación.
     
@@ -18,9 +24,7 @@ def Euler_Equations(I1: float, I2: float, I3: float, omega: array) -> array:
     
     return array([d_omega1_dt, d_omega2_dt, d_omega3_dt])
 
-print(Euler_Equations(2.0, 3.0, 4.0, array([1.0, 2.0, 3.0])))
-
-def Jacobian(I1: float, I2: float, I3: float, omega: array) -> array:
+def exact_Jacobian(I1: float, I2: float, I3: float, omega: array) -> array:
     """
     Calcula la matriz jacobiana de las ecuaciones de Euler para un cuerpo rígido en rotación.
     
@@ -37,7 +41,7 @@ def Jacobian(I1: float, I2: float, I3: float, omega: array) -> array:
     
     return J
 
-def T(I1: float, I2: float, I3: float, omega: array) -> float:
+def T(I1: float, I2: float, I3: float, omega: array) -> array:
     """
     Calcula la energía cinética de rotación de un cuerpo rígido.
     
