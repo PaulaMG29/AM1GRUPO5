@@ -1,7 +1,10 @@
 from numpy import array, linspace
 from numpy.linalg import norm
 
-# Las inercias se dan en el código de gui_reactive.py, son inputs del usuario
+# Las inercias se dan en el código de gui_reactive.py, son inputs del usuario.
+# Aquí solo hay valores por defecto: la GUI los sobrescribe (space_physics.I1 = ...)
+# antes de integrar, para que Euler_Equations(omega, t) entre directamente en Cauchy_Problem.
+I1, I2, I3 = 0.5, 1.0, 1.5
 
 #def Euler_Equations(I1: float, I2: float, I3: float, omega: array) -> array:
 def Euler_Equations(omega: array, t:array) -> array:

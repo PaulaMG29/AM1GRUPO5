@@ -263,6 +263,12 @@ class _PlotRecorder:
 _ENGINE_LOCK = threading.Lock()
 
 
+def set_inertias(inertia: Array) -> None:
+	"""Fija las inercias globales de space_physics que lee Euler_Equations(omega, t)."""
+	physics = sys.modules[Euler_Equations.__module__]
+	physics.I1, physics.I2, physics.I3 = (float(value) for value in inertia)
+
+
 def richardson_with_order(scheme: Scheme, initial: Array, field: Callable, times: Array) -> tuple[Array, float, Array, Array]:
 	"""Richardson_Error de numerical_engine (con su estimate_scheme_order).
 
@@ -933,7 +939,8 @@ class SatelliteAttitudeApp:
 			"omega_degrees": self.omega_degrees,
 			"log_perturbation": self.log_perturbation,
 			"dt": float(times[1] - times[0]),
-			"field": lambda omega, _time: Euler_Equations(*inertias, omega),
+			# Euler_Equations(omega, t) va directa a Cauchy_Problem; lee las inercias de space_physics.
+			"field": Euler_Equations,
 			"runs": {},
 		}
 
@@ -963,6 +970,7 @@ class SatelliteAttitudeApp:
 		scheme, _order = SCHEMES[name]
 		times = results["times"]
 		inertia = results["inertias"]
+		set_inertias(inertia)
 		try:
 			with np.errstate(all="ignore"):
 				solution, _ = Cauchy_Problem(scheme, results["initial"], results["field"], times)
@@ -994,6 +1002,8 @@ class SatelliteAttitudeApp:
 			return run
 		scheme, _order = SCHEMES[name]
 		times = results["times"]
+		# Las inercias de esta ejecución (los sliders pueden haber cambiado desde entonces).
+		set_inertias(results["inertias"])
 		try:
 			error, order, log_n, log_e = richardson_with_order(scheme, results["initial"], results["field"], times)
 		except (ValueError, np.linalg.LinAlgError, TypeError) as failure:
