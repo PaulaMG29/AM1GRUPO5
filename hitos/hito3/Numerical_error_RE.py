@@ -63,11 +63,12 @@ def Richardson_Error(Esquema: Callable, U0: array, F: Callable, t: array)-> arra
     return Error, Orden
     
 
-#U0 = array([1, 0, 0, 1])
+#U0 = array([1, 0, 0])
 U0 = array([0, 1])
-t = partition(0, 10, 1000)
+t = partition(0, 20, 1000)
 
-Error, Orden = Richardson_Error(RK4, U0, Oscilator, t)
+
+Error, Orden = Richardson_Error(RK4, U0, Euler_Equations, t)
 Error_max = max(norm(Error, axis=1))
 
 print("Orden del esquema =", Orden) 
