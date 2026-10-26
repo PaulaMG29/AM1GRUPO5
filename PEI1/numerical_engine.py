@@ -1,4 +1,4 @@
-from numpy import array, zeros, linspace, meshgrid, abs, zeros_like, inf, log, polyfit
+from numpy import array, zeros, linspace, meshgrid, abs, zeros_like, inf, log, polyfit, median
 from typing import Callable
 from numpy.linalg import LinAlgError, solve, norm, eigvals
 import matplotlib.pyplot as plt
@@ -129,6 +129,51 @@ def estimate_scheme_order(Esquema: Callable, U0: array, F: Callable, t: array) -
         E = U2 - U1
         errors.append(norm(E, inf))
 
+    x = log(N_values)
+    y = log(errors)
+
+    # Entre cada par de mallas consecutivas se calcula una
+    # estimación local del orden:
+    #     p = -Δ(log(E)) / Δ(log(N))
+    # Si el método está en régimen asintótico, estos valores
+    # deberían ser aproximadamente constantes.
+
+    local_orders = zeros(len(errors) - 1)
+    for i in range(len(local_orders)):
+        local_orders[i] = -(y[i + 1] - y[i]) / (x[i + 1] - x[i])
+
+    # Se toma la mediana de los órdenes locales porque es poco
+    # sensible a valores atípicos producidos por:
+    #   - Mallas demasiado gruesas (error de truncamiento alto)
+    #   - Mallas demasiado finas (error de redondeo)
+
+    p_ref = median(local_orders)
+
+    # Se consideran válidos únicamente los intervalos cuyo
+    # orden local difiere menos de un 10 % del orden de
+    # referencia.
+ 
+    tol = 0.10 * abs(p_ref)
+    valid_intervals = abs(local_orders - p_ref) < tol
+
+    # Si un intervalo es válido, se conservan los dos puntos
+    # extremos que lo definen.
+
+    valid_points = zeros(len(N_values), dtype=bool)
+
+    for i in range(len(valid_intervals)):
+        if valid_intervals[i]:
+            valid_points[i] = True
+            valid_points[i + 1] = True
+
+    x_fit = x[valid_points]
+    y_fit = y[valid_points]
+
+    # Ajuste lineal en la región asintótica
+
+    coeffs = polyfit(x_fit, y_fit, 1)
+    order = -coeffs[0]
+
     plt.plot(log(N_values), log(errors))
     plt.scatter(log(N_values), log(errors), color= 'black')
     plt.xlabel("ln(N)")
@@ -136,10 +181,10 @@ def estimate_scheme_order(Esquema: Callable, U0: array, F: Callable, t: array) -
     plt.grid()
     plt.show() 
 
-    # ajuste lineal
-    coeffs = polyfit(log(N_values), log(errors), 1)
-    slope = coeffs[0]
-    order = -slope
+#    ajuste lineal
+#  coeffs = polyfit(log(N_values), log(errors), 1)
+# slope = coeffs[0]
+#order = -slope
     return order
 
 def Richardson_Error(Esquema: Callable, U0: array, F: Callable, t: array)-> array:
