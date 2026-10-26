@@ -26,7 +26,8 @@ def our_jacobian(F: Callable[[array,float],array], U: array, t: float) -> array:
     U: current state vector
     """
     n = len(U)
-    J = zeros((n, n))
+    # Mismo tipo que U: con U complejo (región de estabilidad) la parte imaginaria no se pierde.
+    J = zeros((n, n), dtype=U.dtype)
     h = 1e-8  # small perturbation for numerical differentiation
 
     for i in range(n):
@@ -109,7 +110,11 @@ def Cauchy_Problem(Esquema: Callable, U0: array, F: Callable, t: array) -> array
 # ERROR ESTIMATION
 #================================================================================================
 
-def estimate_scheme_order(Esquema: Callable, U0: array, F: Callable, t: array) -> float:
+def estimate_scheme_order(Esquema: Callable, U0: array, F: Callable, t: array) -> tuple:
+    """
+    Devuelve (order, log(N_values), log(errors), valid_points):
+    valid_points marca los puntos usados en el ajuste lineal (región asintótica).
+    """
     number_meshes = 5
     N_values = zeros(number_meshes, dtype=int)
     for i in range(N_values.size):
@@ -184,15 +189,12 @@ def estimate_scheme_order(Esquema: Callable, U0: array, F: Callable, t: array) -
     else:
         order = p_ref
 
-    plt.plot(log(N_values), log(errors))
-    plt.scatter(log(N_values), log(errors), color='black')
-    plt.xlabel("ln(N)")
-    plt.ylabel("ln(E)")
-    plt.grid()
-    plt.show() 
-    return order
+    return order, x, y, valid_points
 
-def Richardson_Error(Esquema: Callable, U0: array, F: Callable, t: array)-> array:
+def Richardson_Error(Esquema: Callable, U0: array, F: Callable, t: array, Orden: float = None)-> array:
+    """
+    Orden: orden del esquema; si no se da, se estima con estimate_scheme_order.
+    """
     t1 = t
     t2 = partition(t[0], t[-1], 2 * (len(t) - 1))
     Dt = t[1] - t[0]
@@ -204,7 +206,8 @@ def Richardson_Error(Esquema: Callable, U0: array, F: Callable, t: array)-> arra
     # Comparamos cada 2 puntos de la solución con Dt/2
     U2 = U2[::2]
 
-    Orden = estimate_scheme_order(Esquema, U0, F, t)
+    if Orden is None:
+        Orden, _, _, _ = estimate_scheme_order(Esquema, U0, F, t)
     Error = (U2 - U1) / (Dt**Orden - (Dt/2)**Orden) * Dt**Orden
     
     return Error, Orden

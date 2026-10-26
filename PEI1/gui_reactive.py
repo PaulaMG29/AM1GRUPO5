@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import threading
+from functools import lru_cache
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable
@@ -22,8 +23,21 @@ try:
 		Euler,
 		RK4,
 		Richardson_Error,
+		create_mesh,
+		estimate_scheme_order,
+		partition,
+		stability_region,
 	)
-	from .space_physics import Euler_Equations, L, T, exact_Jacobian
+	from .space_physics import (
+		Attitude_Equations,
+		Euler_Equations,
+		L,
+		T,
+		equilibrium_spectrum,
+		invariants_drift,
+		nearest_rotation,
+		separatrix,
+	)
 except ImportError:
 	from numerical_engine import (
 		Cauchy_Problem,
@@ -31,8 +45,21 @@ except ImportError:
 		Euler,
 		RK4,
 		Richardson_Error,
+		create_mesh,
+		estimate_scheme_order,
+		partition,
+		stability_region,
 	)
-	from space_physics import Euler_Equations, L, T, exact_Jacobian
+	from space_physics import (
+		Attitude_Equations,
+		Euler_Equations,
+		L,
+		T,
+		equilibrium_spectrum,
+		invariants_drift,
+		nearest_rotation,
+		separatrix,
+	)
 
 
 Array = NDArray[np.float64]
@@ -156,27 +183,6 @@ def shaded_colors(faces: list[Array], base_colors: Array) -> Array:
 	return np.column_stack([rgb, np.ones(len(faces))])
 
 
-def propagate_attitude(solution: Array, times: Array) -> Array:
-	"""Matrices de actitud R(t) (cuerpo → inercial) con dR/dt = R [ω]×.
-
-	Cada paso usa la fórmula de Rodrigues con la velocidad angular media del intervalo,
-	por lo que R permanece ortogonal y la cinemática es de segundo orden.
-	"""
-	rotations = np.empty((len(times), 3, 3))
-	rotations[0] = np.eye(3)
-	for n in range(len(times) - 1):
-		rotation_vector = 0.5 * (solution[n] + solution[n + 1]) * (times[n + 1] - times[n])
-		angle = float(np.linalg.norm(rotation_vector))
-		if angle < 1e-14:
-			rotations[n + 1] = rotations[n]
-			continue
-		x, y, z = rotation_vector / angle
-		skew = np.array([[0, -z, y], [z, 0, -x], [-y, x, 0]])
-		increment = np.eye(3) + np.sin(angle) * skew + (1 - np.cos(angle)) * (skew @ skew)
-		rotations[n + 1] = rotations[n] @ increment
-	return rotations
-
-
 def ellipsoid(radii: Array, nu: int = 32, nv: int = 20) -> tuple[Array, Array, Array]:
 	u = np.linspace(0, 2 * np.pi, nu)
 	v = np.linspace(0, np.pi, nv)
@@ -185,30 +191,6 @@ def ellipsoid(radii: Array, nu: int = 32, nv: int = 20) -> tuple[Array, Array, A
 		radii[1] * np.outer(np.sin(u), np.sin(v)),
 		radii[2] * np.outer(np.ones_like(u), np.cos(v)),
 	)
-
-
-def separatrix_curves(inertia: Array, momentum: float) -> list[Array]:
-	"""Separatriz analítica sobre el elipsoide |L| = momentum (nivel 2T = L²/I2).
-
-	Es la intersección del elipsoide de momento con los planos
-	√(I1(I2−I1)) ω1 = ±√(I3(I3−I2)) ω3: dos elipses que pasan por ±ω*(2).
-	"""
-	i1, i2, i3 = inertia
-	if momentum <= 0 or not (i1 < i2 < i3):
-		return []
-	slope = np.sqrt(i1 * (i2 - i1) / (i3 * (i3 - i2)))
-	theta = np.linspace(0.0, 2 * np.pi, 361)
-	omega1 = momentum * np.cos(theta) / np.sqrt(i1**2 + (i3 * slope) ** 2)
-	omega2 = momentum * np.sin(theta) / i2
-	return [np.column_stack([omega1, omega2, sign * slope * omega1]) for sign in (-1.0, 1.0)]
-
-
-def equilibrium_spectrum(inertia: Array, omega_rate: float, axis_index: int) -> tuple[Array, bool]:
-	"""Autovalores de exact_Jacobian en ω*(k) = Ω e_k y si el equilibrio es inestable."""
-	equilibrium = np.zeros(3)
-	equilibrium[axis_index] = omega_rate
-	eigenvalues = np.linalg.eigvals(exact_Jacobian(*inertia, equilibrium))
-	return eigenvalues, bool(np.max(eigenvalues.real) > 1e-9)
 
 
 def format_spectrum(eigenvalues: Array) -> str:
@@ -221,13 +203,25 @@ def format_spectrum(eigenvalues: Array) -> str:
 	return f"0,  ±{abs(dominant.imag):.3f} i"
 
 
-def amplification_factor(name: str, z: Array) -> Array:
-	"""R(z) de la ecuación test u' = λu, z = λΔt."""
-	if name == "Euler":
-		return 1 + z
-	if name == "Crank-Nicolson":
-		return (1 + z / 2) / (1 - z / 2)
-	return 1 + z + z**2 / 2 + z**3 / 6 + z**4 / 24
+def log_safe(values: Array) -> Array:
+	"""Ceros exactos → NaN para poder dibujar en escala logarítmica."""
+	return np.where(values > 0, values, np.nan)
+
+
+@lru_cache(maxsize=16)
+def stability_map(name: str, extent: float) -> tuple[Array, Array, Array]:
+	"""|R(z)| de stability_region (numerical_engine) en una malla de create_mesh, en caché."""
+	X, Y = create_mesh((-1.25 * extent, 0.75 * extent), (-extent, extent), 140)
+	_, R = stability_region(SCHEMES[name][0], X, Y)
+	return X, Y, np.abs(R)
+
+
+def amplification_at(name: str, points: Array) -> Array:
+	"""|R(z)| de stability_region en los puntos z = λΔt."""
+	return np.array([
+		abs(stability_region(SCHEMES[name][0], np.array([[z.real]]), np.array([[z.imag]]))[1][0, 0])
+		for z in points
+	])
 
 
 def first_invalid(solution: Array) -> int:
@@ -236,55 +230,10 @@ def first_invalid(solution: Array) -> int:
 	return int(np.argmax(bad)) if bad.any() else len(solution)
 
 
-def relative_drift(values: Array) -> Array:
-	"""|q(t) − q(0)| / |q(0)|, con los ceros exactos sustituidos por NaN para la escala log."""
-	drift = np.abs(values - values[0]) / max(abs(values[0]), 1e-300)
-	return np.where(drift > 0, drift, np.nan)
-
-
-class _PlotRecorder:
-	"""Sustituto de matplotlib.pyplot que guarda lo que se iba a pintar sin abrir ventanas.
-
-	estimate_scheme_order (numerical_engine) pinta ln(E) frente a ln(N) con plt.show(), que
-	bloquearía la GUI; así se reutiliza ese código tal cual y se recuperan sus datos.
-	"""
-
-	def __init__(self) -> None:
-		self.x: Array = np.array([])
-		self.y: Array = np.array([])
-
-	def plot(self, x, y, *_args, **_kwargs) -> None:
-		self.x, self.y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
-
-	def __getattr__(self, _name: str) -> Callable:
-		return lambda *_args, **_kwargs: None
-
-
-_ENGINE_LOCK = threading.Lock()
-
-
 def set_inertias(inertia: Array) -> None:
 	"""Fija las inercias globales de space_physics que lee Euler_Equations(omega, t)."""
 	physics = sys.modules[Euler_Equations.__module__]
 	physics.I1, physics.I2, physics.I3 = (float(value) for value in inertia)
-
-
-def richardson_with_order(scheme: Scheme, initial: Array, field: Callable, times: Array) -> tuple[Array, float, Array, Array]:
-	"""Richardson_Error de numerical_engine (con su estimate_scheme_order).
-
-	Devuelve (error, orden estimado, ln N, ln E) de la recta de convergencia.
-	"""
-	engine = sys.modules[Richardson_Error.__module__]
-	recorder = _PlotRecorder()
-	with _ENGINE_LOCK:
-		original = engine.plt
-		engine.plt = recorder
-		try:
-			with np.errstate(all="ignore"):
-				error, order = Richardson_Error(scheme, initial, field, times)
-		finally:
-			engine.plt = original
-	return np.asarray(error, dtype=float), float(order), recorder.x, recorder.y
 
 
 # ================================================================================================
@@ -580,7 +529,7 @@ class SatelliteAttitudeApp:
 		rate = np.deg2rad(self.omega_degrees)
 		axis_names = ("e1 · I mínima", "e2 · I intermedia", "e3 · I máxima")
 		for index, labels in enumerate(self.spectrum_rows):
-			eigenvalues, unstable = equilibrium_spectrum(inertia, rate, index)
+			eigenvalues, unstable = equilibrium_spectrum(*inertia, rate, index)
 			selected = index == self._axis_index()
 			background = "#e6f2ef" if selected else CARD
 			texts = (
@@ -596,7 +545,7 @@ class SatelliteAttitudeApp:
 					foreground=(UNSTABLE_COLOR if unstable else STABLE_COLOR) if column == 3 else "#172b2a",
 					font=("Segoe UI", 10, "bold" if selected else "normal"),
 				)
-		eigenvalues, unstable = equilibrium_spectrum(inertia, rate, self._axis_index())
+		eigenvalues, unstable = equilibrium_spectrum(*inertia, rate, self._axis_index())
 		growth = float(np.max(eigenvalues.real))
 		if unstable:
 			flip = np.log(1 / 10.0**self.log_perturbation) / growth
@@ -759,7 +708,7 @@ class SatelliteAttitudeApp:
 			axis.plot_surface(*ellipsoid(momentum_radii, 36, 24), color="#167d73", alpha=0.20, linewidth=0, shade=True)
 			axis.plot([], [], [], color="#e09b49", label="Energía 2T")
 			axis.plot([], [], [], color="#167d73", label="Momento L²")
-			for index, curve in enumerate(separatrix_curves(inertia, momentum)):
+			for index, curve in enumerate(separatrix(*inertia, momentum)):
 				axis.plot(*curve.T, color="#c34c32", linestyle="--", linewidth=1.1, label="Separatriz" if index == 0 else None)
 			for index, color in enumerate(AXIS_COLORS):
 				points = np.zeros((2, 3))
@@ -839,30 +788,24 @@ class SatelliteAttitudeApp:
 			self._draw_stability_regions()
 
 	def _stability_points(self) -> tuple[Array, bool]:
-		eigenvalues, unstable = equilibrium_spectrum(
-			np.asarray(self.inertias), np.deg2rad(self.omega_degrees), self._axis_index()
-		)
+		eigenvalues, unstable = equilibrium_spectrum(*self.inertias, np.deg2rad(self.omega_degrees), self._axis_index())
 		return eigenvalues * self.dt, unstable
 
 	def _draw_stability_regions(self) -> None:
 		if not hasattr(self, "stability_axes"):
 			return
 		points, _ = self._stability_points()
-		extent = max(4.0, 1.25 * float(np.max(np.abs(points))))
-		x = np.linspace(-1.25 * extent, 0.75 * extent, 220)
-		y = np.linspace(-extent, extent, 220)
-		xx, yy = np.meshgrid(x, y)
-		z = xx + 1j * yy
+		# Extensión redondeada a 0.5 para reutilizar las mallas en caché al mover Δt.
+		extent = max(4.0, float(np.ceil(2.5 * float(np.max(np.abs(points))))) / 2)
 		for axis, name in zip(self.stability_axes, SCHEMES):
 			axis.clear()
-			amplification = amplification_factor(name, z)
-			stable = np.abs(amplification) <= 1.0
-			axis.contourf(xx, yy, stable.astype(float), levels=[0.5, 1.5], colors=["#a9d7cf"], alpha=0.9)
-			axis.contour(xx, yy, np.abs(amplification), levels=[1.0], colors=["#203b38"], linewidths=1.1)
+			xx, yy, modulus = stability_map(name, extent)
+			axis.contourf(xx, yy, (modulus <= 1.0).astype(float), levels=[0.5, 1.5], colors=["#a9d7cf"], alpha=0.9)
+			axis.contour(xx, yy, modulus, levels=[1.0], colors=["#203b38"], linewidths=1.1)
 			axis.axhline(0, color="#879794", linewidth=0.7)
 			axis.axvline(0, color="#879794", linewidth=0.7)
 			axis.scatter(points.real, points.imag, color="#c34c32", marker="x", s=48, zorder=3, label="λ·Δt")
-			axis.set(title=name, xlabel="Re(z)", ylabel="Im(z)", xlim=(x[0], x[-1]), ylim=(y[0], y[-1]), aspect="equal")
+			axis.set(title=name, xlabel="Re(z)", ylabel="Im(z)", xlim=(xx[0, 0], xx[0, -1]), ylim=(yy[0, 0], yy[-1, 0]), aspect="equal")
 			axis.title.set_fontweight("bold" if name == self.scheme_var.get() else "normal")
 			axis.grid(alpha=0.16)
 			axis.legend(loc="lower left", fontsize=8)
@@ -886,7 +829,7 @@ class SatelliteAttitudeApp:
 			integration = "t_f no es un número válido"
 		dominant = float(np.max(np.abs(points)))
 		ratios = "  ·  ".join(
-			f"{name}: {float(np.max(np.abs(amplification_factor(name, points)))):.5f}" for name in SCHEMES
+			f"{name}: {float(np.max(amplification_at(name, points))):.5f}" for name in SCHEMES
 		)
 		initial = self._initial_omega()
 		items = (
@@ -930,7 +873,7 @@ class SatelliteAttitudeApp:
 		self.scheme_name = self.scheme_var.get()
 		self.final_time = final_time
 		inertias = np.asarray(self.inertias, dtype=float).copy()
-		times = np.linspace(0.0, final_time, steps + 1)
+		times = partition(0.0, final_time, steps)
 		results = {
 			"times": times,
 			"initial": initial,
@@ -939,8 +882,6 @@ class SatelliteAttitudeApp:
 			"omega_degrees": self.omega_degrees,
 			"log_perturbation": self.log_perturbation,
 			"dt": float(times[1] - times[0]),
-			# Euler_Equations(omega, t) va directa a Cauchy_Problem; lee las inercias de space_physics.
-			"field": Euler_Equations,
 			"runs": {},
 		}
 
@@ -963,7 +904,7 @@ class SatelliteAttitudeApp:
 
 	@staticmethod
 	def _run_scheme(results: dict, name: str) -> dict:
-		"""Cauchy_Problem con un esquema + invariantes 2T y L² + actitud. Se guarda en caché."""
+		"""Cauchy_Problem de Attitude_Equations (ω y R) + invariantes 2T y L². Se guarda en caché."""
 		runs = results["runs"]
 		if name in runs:
 			return runs[name]
@@ -971,26 +912,30 @@ class SatelliteAttitudeApp:
 		times = results["times"]
 		inertia = results["inertias"]
 		set_inertias(inertia)
+		# Estado U = [ω, R] con R(0) = Id: ω sale igual que con Euler_Equations y R da la actitud.
+		initial_state = np.concatenate([results["initial"], np.eye(3).reshape(9)])
 		try:
 			with np.errstate(all="ignore"):
-				solution, _ = Cauchy_Problem(scheme, results["initial"], results["field"], times)
+				states, _ = Cauchy_Problem(scheme, initial_state, Attitude_Equations, times)
 		except (ValueError, np.linalg.LinAlgError) as error:
 			runs[name] = {"failed": f"{name}: {error}"}
 			return runs[name]
-		valid = first_invalid(solution)
+		valid = first_invalid(states)
 		if valid < 2:
 			runs[name] = {"failed": f"{name}: la solución diverge desde el primer paso."}
 			return runs[name]
-		solution, run_times = solution[:valid], times[:valid]
-		energy = 2 * np.array([T(*inertia, omega) for omega in solution])
-		momentum = np.array([L(*inertia, omega) for omega in solution]) ** 2
+		states, run_times = states[:valid], times[:valid]
+		solution = states[:, 0:3]
+		with np.errstate(all="ignore"):
+			energy_drift, momentum_drift = invariants_drift(*inertia, solution)
 		runs[name] = {
 			"solution": solution,
 			"times": run_times,
 			"diverged": valid < len(times),
-			"energy_drift": relative_drift(energy),
-			"momentum_drift": relative_drift(momentum),
-			"rotations": propagate_attitude(solution, run_times),
+			"energy_drift": log_safe(energy_drift),
+			"momentum_drift": log_safe(momentum_drift),
+			# Para dibujar se proyecta R sobre la rotación más cercana (el esquema no conserva RᵀR = I).
+			"rotations": np.array([nearest_rotation(state[3:12].reshape(3, 3)) for state in states]),
 		}
 		return runs[name]
 
@@ -1005,13 +950,16 @@ class SatelliteAttitudeApp:
 		# Las inercias de esta ejecución (los sliders pueden haber cambiado desde entonces).
 		set_inertias(results["inertias"])
 		try:
-			error, order, log_n, log_e = richardson_with_order(scheme, results["initial"], results["field"], times)
+			with np.errstate(all="ignore"):
+				order, log_n, log_e, used = estimate_scheme_order(scheme, results["initial"], Euler_Equations, times)
+				error, order = Richardson_Error(scheme, results["initial"], Euler_Equations, times, Orden=order)
 		except (ValueError, np.linalg.LinAlgError, TypeError) as failure:
-			error, order, log_n, log_e = np.full((len(times), 3), np.nan), np.nan, np.array([]), np.array([])
+			error, order = np.full((len(times), 3), np.nan), np.nan
+			log_n, log_e, used = np.array([]), np.array([]), np.array([], dtype=bool)
 			run["richardson_failed"] = str(failure)
 		run["richardson"] = error
 		run["order_estimate"] = order
-		run["convergence"] = (log_n, log_e)
+		run["convergence"] = (log_n, log_e, used)
 		return run
 
 	# --------------------------------------------------------------------------------------------
@@ -1146,7 +1094,7 @@ class SatelliteAttitudeApp:
 			momentum_radii = momentum / inertia
 			axis.plot_surface(*ellipsoid(energy_radii), color="#e09b49", alpha=0.10, linewidth=0)
 			axis.plot_surface(*ellipsoid(momentum_radii), color="#167d73", alpha=0.11, linewidth=0)
-			for index, curve in enumerate(separatrix_curves(inertia, momentum)):
+			for index, curve in enumerate(separatrix(*inertia, momentum)):
 				axis.plot(*curve.T, color="#c34c32", linewidth=1.0, linestyle="--", label="Separatriz crítica" if index == 0 else None)
 			for index, color in enumerate(AXIS_COLORS):
 				points = np.zeros((2, 3))
@@ -1190,15 +1138,19 @@ class SatelliteAttitudeApp:
 		return axis.axvline(times[0], color="#111111", linewidth=0.8, alpha=0.6)
 
 	@staticmethod
-	def _draw_convergence(axis, log_n: Array, log_e: Array, estimate: float, order: int) -> None:
-		"""Recta ln E – ln N de estimate_scheme_order (numerical_engine)."""
-		mask = np.isfinite(log_n) & np.isfinite(log_e)
-		axis.plot(log_n[mask], log_e[mask], "o-", color="#173b38", linewidth=1.3, label="ln‖U_2N − U_N‖∞")
-		if np.count_nonzero(mask) >= 2 and np.isfinite(estimate):
-			# Recta de pendiente −q con el q de estimate_scheme_order; la ordenada con la mediana
-			# para que los puntos que esa función descarta (redondeo, malla gruesa) no la desplacen.
-			intercept = float(np.median(log_e[mask] + estimate * log_n[mask]))
-			axis.plot(log_n[mask], intercept - estimate * log_n[mask], "--", color="#c34c32", linewidth=1.0, label=f"pendiente −q = {-estimate:.2f}")
+	def _draw_convergence(axis, log_n: Array, log_e: Array, used: Array, estimate: float, order: int) -> None:
+		"""Puntos ln E – ln N de estimate_scheme_order, separando los que usó en su ajuste."""
+		finite = np.isfinite(log_n) & np.isfinite(log_e)
+		used = used.astype(bool) & finite
+		axis.plot(log_n[finite], log_e[finite], "-", color="#173b38", linewidth=1.0, alpha=0.6)
+		axis.plot(log_n[used], log_e[used], "o", color="#173b38", markersize=6, label="usados en el ajuste")
+		discarded = finite & ~used
+		if np.any(discarded):
+			axis.plot(log_n[discarded], log_e[discarded], "o", markerfacecolor="white", markeredgecolor="#173b38", markersize=6, label="descartados")
+		if np.count_nonzero(used) >= 2 and np.isfinite(estimate):
+			# Recta de pendiente −q por los puntos usados (solo para dibujarla).
+			intercept = float(np.mean(log_e[used] + estimate * log_n[used]))
+			axis.plot(log_n[finite], intercept - estimate * log_n[finite], "--", color="#c34c32", linewidth=1.0, label=f"pendiente −q = {-estimate:.2f}")
 		axis.set(
 			title=f"Convergencia (estimate_scheme_order)\norden estimado q = {estimate:.2f}  ·  teórico {order}",
 			xlabel="ln(N)", ylabel="ln(E)",
