@@ -1194,9 +1194,11 @@ class SatelliteAttitudeApp:
 		"""Recta ln E – ln N de estimate_scheme_order (numerical_engine)."""
 		mask = np.isfinite(log_n) & np.isfinite(log_e)
 		axis.plot(log_n[mask], log_e[mask], "o-", color="#173b38", linewidth=1.3, label="ln‖U_2N − U_N‖∞")
-		if np.count_nonzero(mask) >= 2:
-			fit = np.polyfit(log_n[mask], log_e[mask], 1)
-			axis.plot(log_n[mask], np.polyval(fit, log_n[mask]), "--", color="#c34c32", linewidth=1.0, label=f"ajuste: pendiente {fit[0]:.2f}")
+		if np.count_nonzero(mask) >= 2 and np.isfinite(estimate):
+			# Recta de pendiente −q con el q de estimate_scheme_order; la ordenada con la mediana
+			# para que los puntos que esa función descarta (redondeo, malla gruesa) no la desplacen.
+			intercept = float(np.median(log_e[mask] + estimate * log_n[mask]))
+			axis.plot(log_n[mask], intercept - estimate * log_n[mask], "--", color="#c34c32", linewidth=1.0, label=f"pendiente −q = {-estimate:.2f}")
 		axis.set(
 			title=f"Convergencia (estimate_scheme_order)\norden estimado q = {estimate:.2f}  ·  teórico {order}",
 			xlabel="ln(N)", ylabel="ln(E)",
