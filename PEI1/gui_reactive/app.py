@@ -9,14 +9,17 @@ from typing import Callable
 
 from matplotlib import animation
 
-from .config import AXIS_NAMES, BACKGROUND
+from .config import AXIS_NAMES, BACKGROUND, PAGE_TITLES, SCHEMES
+from .simulation import richardson, run_scheme
+from .widgets import MathLabel
+from .window_estimated_error import EstimatedErrorWindow
 from .window_initial_conditions import InitialConditionsWindow
-from .window_integration_error import IntegrationErrorWindow
+from .window_numerical_integration import NumericalIntegrationWindow
 from .window_numerical_schemes import NumericalSchemesWindow
 
 
-class SatelliteAttitudeApp(InitialConditionsWindow, NumericalSchemesWindow, IntegrationErrorWindow):
-	"""Three-view Tkinter dashboard backed by the PEI1 numerical modules.
+class SatelliteAttitudeApp(InitialConditionsWindow, NumericalSchemesWindow, NumericalIntegrationWindow, EstimatedErrorWindow):
+	"""Four-view Tkinter dashboard backed by the PEI1 numerical modules.
 
 	Esta clase es la «carcasa»: estado compartido, menú lateral, navegación y cálculo en segundo
 	plano. El contenido de cada ventana se hereda de su propio fichero window_*.py.
@@ -83,11 +86,7 @@ class SatelliteAttitudeApp(InitialConditionsWindow, NumericalSchemesWindow, Inte
 		ttk.Button(self.sidebar, text=arrow, width=3, command=self._toggle_menu).pack(anchor="w", pady=(0, 22))
 		if self.menu_open:
 			ttk.Label(self.sidebar, text="PEI 1", style="Section.TLabel").pack(anchor="w", pady=(0, 12))
-			for index, title in enumerate((
-				"Satélite y Condiciones Iniciales",
-				"Esquemas Numéricos",
-				"Integración y Error",
-			)):
+			for index, title in enumerate(PAGE_TITLES):
 				ttk.Button(
 					self.sidebar,
 					text=title,
@@ -113,20 +112,70 @@ class SatelliteAttitudeApp(InitialConditionsWindow, NumericalSchemesWindow, Inte
 		for row in range(1, 4):
 			self.content.rowconfigure(row, weight=0)
 		self.content.rowconfigure(1, weight=1)
-		titles = (
-			"Satélite y Condiciones Iniciales",
-			"Esquemas Numéricos",
-			"Integración y Error",
-		)
-		ttk.Label(self.content, text=titles[page], style="Title.TLabel").grid(
+		ttk.Label(self.content, text=PAGE_TITLES[page], style="Title.TLabel").grid(
 			row=0, column=0, sticky="w", pady=(0, 10)
 		)
 		if page == 0:
 			self._build_initial_page()
 		elif page == 1:
 			self._build_scheme_page()
-		else:
+		elif page == 2:
 			self._build_results_page()
+		else:
+			self._build_error_page()
+
+	# --------------------------------------------------------------------------------------------
+	# Shared by pages 3 and 4: scheme selector toolbar
+	# --------------------------------------------------------------------------------------------
+
+	def _build_results_toolbar(self, with_pause: bool) -> ttk.Frame | None:
+		"""Barra «Esquema visualizado» + resumen y marco `results_frame` debajo (None si no hay resultados)."""
+		if self.results is None:
+			MathLabel(self.content, text="Configura los parámetros y pulsa «Ejecutar» en «Esquemas Numéricos».").grid(
+				row=1, column=0, sticky="nw"
+			)
+			return None
+		toolbar = ttk.Frame(self.content)
+		toolbar.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+		ttk.Label(toolbar, text="Esquema visualizado", style="Section.TLabel").pack(side="left")
+		self.view_scheme_var = tk.StringVar(value=self.scheme_name)
+		selector = ttk.Combobox(
+			toolbar, textvariable=self.view_scheme_var, values=tuple(SCHEMES), state="readonly", width=18
+		)
+		selector.pack(side="left", padx=(8, 16))
+		selector.bind("<<ComboboxSelected>>", self._switch_scheme)
+		if with_pause:
+			self.pause_button = ttk.Button(toolbar, text="Pausa", command=self._toggle_animation)
+			self.pause_button.pack(side="left")
+		self.summary_label = MathLabel(toolbar, size=9, color="#243b39")
+		self.summary_label.pack(side="left", padx=16)
+		self.content.rowconfigure(1, weight=0)
+		self.content.rowconfigure(2, weight=1)
+		self.results_frame = ttk.Frame(self.content)
+		self.results_frame.grid(row=2, column=0, sticky="nsew")
+		return toolbar
+
+	def _switch_scheme(self, _event: tk.Event | None = None) -> None:
+		if self.busy or self.results is None:
+			self.view_scheme_var.set(self.scheme_name)
+			return
+		name = self.view_scheme_var.get()
+		run = run_scheme(self.results, name)
+		if run.get("failed"):
+			messagebox.showerror("Esquema no disponible", run["failed"], parent=self.root)
+			self.view_scheme_var.set(self.scheme_name)
+			return
+		results = self.results
+		page = self.current_page
+
+		def done() -> None:
+			self.scheme_name = name
+			if self.current_page == page == 2:
+				self._render_results()
+			elif self.current_page == page == 3:
+				self._render_error()
+
+		self._run_in_background(f"Estimando el orden de {name} por Richardson…", lambda: richardson(results, name), done)
 
 	def _run_in_background(self, message: str, work: Callable[[], None], done: Callable[[], None]) -> None:
 		"""Ejecuta `work` en un hilo (solo NumPy, nada de Tk) y luego `done` en el hilo de Tk."""

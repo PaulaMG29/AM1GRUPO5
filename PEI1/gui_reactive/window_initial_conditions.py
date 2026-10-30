@@ -16,7 +16,7 @@ from space_physics.separatrix import separatrix
 
 from .config import AXIS_COLORS, AXIS_NAMES, BACKGROUND, CARD, STABLE_COLOR, UNSTABLE_COLOR, Array
 from .helpers import ellipsoid, format_spectrum, satellite_model, shaded_colors
-from .widgets import make_canvas, make_card, slider_control
+from .widgets import MathLabel, make_canvas, make_card, slider_control
 
 
 class InitialConditionsWindow:
@@ -82,7 +82,7 @@ class InitialConditionsWindow:
 		for index, value in enumerate(self.inertias):
 			control = slider_control(
 				controls,
-				f"I{index + 1}  (kg m²)",
+				rf"$I_{index + 1}$  (kg$\,$m$^2$)",
 				value,
 				0.1,
 				2.0,
@@ -98,7 +98,7 @@ class InitialConditionsWindow:
 		condition.columnconfigure(2, weight=1)
 		slider_control(
 			condition,
-			"Ω inicial  (grados/s, el signo da el sentido de giro)",
+			r"$\Omega$ inicial  ($^\circ$/s, el signo da el sentido de giro)",
 			self.omega_degrees,
 			-360.0,
 			360.0,
@@ -107,7 +107,7 @@ class InitialConditionsWindow:
 		).grid(row=0, column=0, sticky="ew", padx=5)
 		slider_control(
 			condition,
-			"Perturbación transversal  log10(ε)   [δω = ε |Ω|]",
+			r"Perturbación transversal  $\log_{10}\varepsilon$   [$\delta\omega = \varepsilon\,|\Omega|$]",
 			self.log_perturbation,
 			-10.0,
 			-1.0,
@@ -117,7 +117,7 @@ class InitialConditionsWindow:
 		).grid(row=0, column=1, sticky="ew", padx=5)
 		axis_frame = ttk.Frame(condition, padding=(10, 0))
 		axis_frame.grid(row=0, column=2, sticky="ew")
-		ttk.Label(axis_frame, text="Eje del giro nominal", style="Section.TLabel").pack(anchor="w")
+		MathLabel(axis_frame, text="Eje del giro nominal", color="#245b55", weight="bold").pack(anchor="w")
 		self.axis_var = tk.StringVar(value=self.spin_axis)
 		axis_box = ttk.Combobox(axis_frame, textvariable=self.axis_var, values=AXIS_NAMES, state="readonly")
 		axis_box.pack(fill="x", pady=(5, 0))
@@ -127,26 +127,23 @@ class InitialConditionsWindow:
 		self._update_spectrum_card()
 
 	def _build_spectrum_card(self, parent) -> tk.Frame:
-		card = make_card(parent, "Linealización espectral en los equilibrios  ω*(k) = Ω·e_k   (autovalores de exact_Jacobian)")
+		card = make_card(parent, r"Linealización espectral en los equilibrios  $\omega^*_k = \Omega\,\mathbf{e}_k$   (autovalores del jacobiano exacto)")
 		card.columnconfigure(2, weight=1)
-		header_font = ("Segoe UI", 9, "bold")
-		for column, text in enumerate(("Equilibrio", "Eje de giro", "Autovalores λ (s⁻¹)", "Clasificación")):
-			tk.Label(card, text=text, background=CARD, foreground="#5b6d6a", font=header_font).grid(
+		for column, text in enumerate(("Equilibrio", "Eje de giro", r"Autovalores $\lambda$ (s$^{-1}$)", "Clasificación")):
+			MathLabel(card, text=text, background=CARD, color="#5b6d6a", size=9, weight="bold").grid(
 				row=1, column=column, sticky="w", padx=(0, 24)
 			)
 		self.spectrum_rows = []
 		for index in range(3):
 			labels = [
-				tk.Label(card, background=CARD, font=("Segoe UI", 10), anchor="w")
+				MathLabel(card, background=CARD, anchor="w")
 				for _ in range(4)
 			]
 			for column, label in enumerate(labels):
 				label.grid(row=index + 2, column=column, sticky="ew", padx=(0, 24), ipady=2)
 			self.spectrum_rows.append(labels)
-		self.flip_var = tk.StringVar()
-		tk.Label(card, textvariable=self.flip_var, background=CARD, foreground="#173b38", font=("Segoe UI", 9, "italic")).grid(
-			row=5, column=0, columnspan=4, sticky="w", pady=(6, 0)
-		)
+		self.flip_label = MathLabel(card, background=CARD, color="#173b38", size=9, style="italic")
+		self.flip_label.grid(row=5, column=0, columnspan=4, sticky="w", pady=(6, 0))
 		return card
 
 	def _update_spectrum_card(self) -> None:
@@ -154,35 +151,36 @@ class InitialConditionsWindow:
 			return
 		inertia = np.asarray(self.inertias)
 		rate = np.deg2rad(self.omega_degrees)
-		axis_names = ("e1 · I mínima", "e2 · I intermedia", "e3 · I máxima")
+		axis_names = (r"$\mathbf{e}_1$ · $I$ mínima", r"$\mathbf{e}_2$ · $I$ intermedia", r"$\mathbf{e}_3$ · $I$ máxima")
 		for index, labels in enumerate(self.spectrum_rows):
 			eigenvalues, unstable = equilibrium_spectrum(*inertia, rate, index)
 			selected = index == self._axis_index()
 			background = "#e6f2ef" if selected else CARD
 			texts = (
-				f"{'▶ ' if selected else '   '}ω*({index + 1})",
+				f"{'▶ ' if selected else '    '}$\\omega^*_{index + 1}$",
 				axis_names[index],
 				format_spectrum(eigenvalues),
 				"● Silla hiperbólica · inestable" if unstable else "● Centro elíptico · estable (Lyapunov)",
 			)
 			for column, (label, text) in enumerate(zip(labels, texts)):
-				label.configure(
-					text=text,
-					background=background,
-					foreground=(UNSTABLE_COLOR if unstable else STABLE_COLOR) if column == 3 else "#172b2a",
-					font=("Segoe UI", 10, "bold" if selected else "normal"),
+				label.configure(background=background)
+				label.set(
+					text,
+					color=(UNSTABLE_COLOR if unstable else STABLE_COLOR) if column == 3 else "#172b2a",
+					weight="bold" if selected else "normal",
 				)
 		eigenvalues, unstable = equilibrium_spectrum(*inertia, rate, self._axis_index())
 		growth = float(np.max(eigenvalues.real))
 		if unstable:
 			flip = np.log(1 / 10.0**self.log_perturbation) / growth
-			self.flip_var.set(
-				f"Perturbación ∝ e^(λt) con λ = {growth:.3f} s⁻¹  →  primer volteo estimado en t ≈ ln(1/ε)/λ = {flip:.2f} s"
+			self.flip_label.set(
+				rf"Perturbación $\propto e^{{\lambda t}}$ con $\lambda = {growth:.3f}\ \mathrm{{s^{{-1}}}}$  $\rightarrow$  "
+				rf"primer volteo estimado en $t \approx \ln(1/\varepsilon)/\lambda = {flip:.2f}$ s"
 			)
 		elif abs(rate) > 0:
-			self.flip_var.set("Equilibrio estable: la perturbación oscila (polhodia cerrada alrededor de ω*) sin crecer.")
+			self.flip_label.set(r"Equilibrio estable: la perturbación oscila (polhodia cerrada alrededor de $\omega^*$) sin crecer.")
 		else:
-			self.flip_var.set("Ω = 0: no hay giro y todos los autovalores son nulos.")
+			self.flip_label.set(r"$\Omega = 0$: no hay giro y todos los autovalores son nulos.")
 
 	def _set_inertia(self, index: int, value: float) -> None:
 		if self._syncing_inertias:
@@ -239,9 +237,9 @@ class InitialConditionsWindow:
 		axis.clear()
 		inertia = np.asarray(self.inertias, dtype=float)
 		faces, base_colors, lines, clamped = satellite_model(inertia)
-		title = "CubeSat 3U (bus con proporciones de la caja de inercias I1, I2, I3)"
+		title = r"CubeSat 3U (bus con proporciones de la caja de inercias $I_1, I_2, I_3$)"
 		if clamped:
-			title += "\nproporciones recortadas para el dibujo" + (" (I3 ≥ I1 + I2: no realizable)" if inertia[2] >= inertia[0] + inertia[1] else "")
+			title += "\nproporciones recortadas para el dibujo" + (r" ($I_3 \geq I_1 + I_2$: no realizable)" if inertia[2] >= inertia[0] + inertia[1] else "")
 		axis.set_title(title, fontsize=10, color="#173b38")
 		axis.add_collection3d(Poly3DCollection(
 			faces, facecolors=shaded_colors(faces, base_colors), edgecolors=(0.15, 0.15, 0.17, 0.45), linewidths=0.35,
@@ -253,36 +251,36 @@ class InitialConditionsWindow:
 			vector = np.zeros(3)
 			vector[index] = extent * 0.97
 			axis.plot(*zip(np.zeros(3), vector), color=color, linewidth=1.6, alpha=0.9)
-			axis.text(*(vector * 1.04), f"e{index + 1}", color=color, fontsize=10, fontweight="bold")
+			axis.text(*(vector * 1.04), rf"$\mathbf{{e}}_{index + 1}$", color=color, fontsize=12)
 		spin = np.zeros(3)
 		spin[self._axis_index()] = np.sign(self.omega_degrees or 1.0) * extent * 0.8
 		axis.quiver(0, 0, 0, *spin, color="#111111", linewidth=1.8, arrow_length_ratio=0.15)
-		axis.text(*(spin * 0.62 + 0.07), "Ω", color="#111111", fontsize=11, fontweight="bold")
+		axis.text(*(spin * 0.62 + 0.07), r"$\Omega$", color="#111111", fontsize=13)
 		self._style_3d_axis(axis, ("Eje 1", "Eje 2", "Eje 3"), extent)
 		axis.view_init(elev=24, azim=35)
 
 	def _draw_invariant_ellipsoids(self, axis) -> None:
 		axis.clear()
-		axis.set_title("Elipsoides 2T y L², separatriz y equilibrios", fontsize=10, color="#173b38")
+		axis.set_title(r"Elipsoides $2T$ y $L^2$, separatriz y equilibrios", fontsize=10, color="#173b38")
 		inertia = np.asarray(self.inertias)
 		omega = self._initial_omega()
 		energy = 2 * float(T(*self.inertias, omega))
 		momentum = float(L(*self.inertias, omega))
-		labels = ("ω1 (rad/s)", "ω2 (rad/s)", "ω3 (rad/s)")
+		labels = (r"$\omega_1$ (rad/s)", r"$\omega_2$ (rad/s)", r"$\omega_3$ (rad/s)")
 		if energy > 0 and momentum > 0:
 			energy_radii = np.sqrt(energy / inertia)
 			momentum_radii = momentum / inertia
 			axis.plot_surface(*ellipsoid(energy_radii, 36, 24), color="#e09b49", alpha=0.22, linewidth=0, shade=True)
 			axis.plot_surface(*ellipsoid(momentum_radii, 36, 24), color="#167d73", alpha=0.20, linewidth=0, shade=True)
-			axis.plot([], [], [], color="#e09b49", label="Energía 2T")
-			axis.plot([], [], [], color="#167d73", label="Momento L²")
+			axis.plot([], [], [], color="#e09b49", label=r"Energía $2T$")
+			axis.plot([], [], [], color="#167d73", label=r"Momento $L^2$")
 			for index, curve in enumerate(separatrix(*inertia, momentum)):
 				axis.plot(*curve.T, color="#c34c32", linestyle="--", linewidth=1.1, label="Separatriz" if index == 0 else None)
 			for index, color in enumerate(AXIS_COLORS):
 				points = np.zeros((2, 3))
 				points[:, index] = (momentum / inertia[index], -momentum / inertia[index])
 				axis.scatter(*points.T, color=color, s=22, depthshade=False)
-			axis.scatter(*omega, color="#111111", s=40, marker="*", depthshade=False, label="ω(0)")
+			axis.scatter(*omega, color="#111111", s=40, marker="*", depthshade=False, label=r"$\omega(0)$")
 			axis.legend(loc="upper left", fontsize=8)
 			extent = 1.1 * max(float(np.max(energy_radii)), float(np.max(momentum_radii)))
 		else:

@@ -126,13 +126,41 @@ def ellipsoid(radii: Array, nu: int = 32, nv: int = 20) -> tuple[Array, Array, A
 
 
 def format_spectrum(eigenvalues: Array) -> str:
-	"""«0, ±1.814» (silla) o «0, ±1.814 i» (centro)."""
+	"""LaTeX de «0, ±1.814» (silla) o «0, ±1.814 i» (centro)."""
 	dominant = eigenvalues[np.argmax(np.abs(eigenvalues))]
 	if abs(dominant) < 1e-12:
-		return "0, 0, 0"
+		return r"$0,\ 0,\ 0$"
 	if abs(dominant.real) >= abs(dominant.imag):
-		return f"0,  ±{abs(dominant.real):.3f}"
-	return f"0,  ±{abs(dominant.imag):.3f} i"
+		return rf"$0,\ \pm {abs(dominant.real):.3f}$"
+	return rf"$0,\ \pm {abs(dominant.imag):.3f}\,i$"
+
+
+def latex_sci(value: float, digits: int = 2) -> str:
+	"""Número en notación científica LaTeX (sin $): 3.21e-03 → 3.21\\times10^{-3}."""
+	if not np.isfinite(value):
+		return r"\mathrm{—}"
+	if value == 0:
+		return "0"
+	mantissa, exponent = f"{value:.{digits}e}".split("e")
+	return rf"{mantissa}\times10^{{{int(exponent)}}}"
+
+
+def error_summary(error: Array, solution: Array, times: Array) -> dict:
+	"""Máximos del error de Richardson E(t) (N x 3) frente a la solución ω(t) del mismo esquema."""
+	norm = np.linalg.norm(error, axis=1)
+	finite = np.isfinite(norm)
+	if not np.any(finite):
+		return {"max": np.nan, "time": np.nan, "relative": np.nan, "components": np.full(3, np.nan), "final": np.nan}
+	index = int(np.nanargmax(np.where(finite, norm, -np.inf)))
+	with np.errstate(divide="ignore", invalid="ignore"):
+		relative = norm / np.linalg.norm(solution, axis=1)
+	return {
+		"max": float(norm[index]),
+		"time": float(times[index]),
+		"relative": float(np.nanmax(relative)) if np.any(np.isfinite(relative)) else np.nan,
+		"components": np.nanmax(np.abs(error), axis=0),
+		"final": float(norm[-1]),
+	}
 
 
 def log_safe(values: Array) -> Array:
