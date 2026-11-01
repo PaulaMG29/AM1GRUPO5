@@ -157,7 +157,8 @@ class InitialConditionsWindow:
 			selected = index == self._axis_index()
 			background = "#e6f2ef" if selected else CARD
 			texts = (
-				f"{'▶ ' if selected else '    '}$\\omega^*_{index + 1}$",
+				# Punto de LaTeX (fuente matemática): se ve igual con cualquier fuente del sistema.
+				(r"$\bullet$  " if selected else "     ") + rf"$\omega^*_{index + 1}$",
 				axis_names[index],
 				format_spectrum(eigenvalues),
 				"● Silla hiperbólica · inestable" if unstable else "● Centro elíptico · estable (Lyapunov)",
