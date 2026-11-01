@@ -127,7 +127,7 @@ class InitialConditionsWindow:
 		self._update_spectrum_card()
 
 	def _build_spectrum_card(self, parent) -> tk.Frame:
-		card = make_card(parent, r"Linealización espectral en los equilibrios  $\omega^*_k = \Omega\,\mathbf{e}_k$   (autovalores del jacobiano exacto)")
+		card = make_card(parent, r"Linealización espectral en los equilibrios  $\omega^*_k = \Omega\,\mathbf{e}_k$   (autovalores del jacobiano numérico)")
 		card.columnconfigure(2, weight=1)
 		for column, text in enumerate(("Equilibrio", "Eje de giro", r"Autovalores $\lambda$ (s$^{-1}$)", "Clasificación")):
 			MathLabel(card, text=text, background=CARD, color="#5b6d6a", size=9, weight="bold").grid(
