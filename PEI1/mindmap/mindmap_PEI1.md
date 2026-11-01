@@ -10,17 +10,6 @@ markmap:
 
 # PEI 1 · Simulador de actitud satelital
 
-## Arquitectura (grupos y capas)
-- `numerical_engine` → motor numérico genérico (no sabe de física)
-- `space_physics` → modelo físico del sólido rígido
-- `gui_reactive` → interfaz Tkinter + Matplotlib que une los dos grupos
-- `v0 - spagetti` → versión original en 3 ficheros
-- Dependencias
-  - `gui_reactive` → `numerical_engine` + `space_physics`
-  - `space_physics` → `numerical_engine` (solo `our_jacobian`)
-  - `numerical_engine` no depende de nadie
-- `__init__.py` de cada grupo reexporta sus funciones (fachada)
-
 ## numerical_engine
 ### `linear_solvers.py`
 - `partition(a, b, N)` → malla temporal uniforme de $N$ pasos
@@ -122,36 +111,3 @@ markmap:
 - Error de Richardson $E(t)$
 - Convergencia + orden estimado $q$ y teórico $p$
 - Deriva de energía y de momento (4 esquemas)
-
-## Flujo de una simulación
-### 1 · Condiciones iniciales
-- $\omega(0) = \Omega\,\mathbf{e}_k + \delta\omega$, con $\delta\omega = \varepsilon\,|\Omega|$
-- `equilibrium_spectrum` predice volteo en $t \approx \ln(1/\varepsilon)/\lambda$
-### 2 · Elección del esquema
-- ¿Está $\lambda\,\Delta t$ dentro de la región de estabilidad?
-### 3 · Ejecutar (hilo secundario)
-- `partition(0, t_f, N)`
-- Para cada esquema → `run_scheme`
-  - `set_inertias`
-  - `Cauchy_Problem(esquema, [ω, R=I], Attitude_Equations)`
-  - Corte si diverge (`first_invalid`)
-  - `invariants_drift` y `nearest_rotation`
-- `richardson` → `estimate_scheme_order` + `Richardson_Error`
-### 4 · Resultados
-- Ventana 3: movimiento
-- Ventana 4: errores
-
-## Conceptos de Python
-### Ingeniería de software
-- Paquetes, capas e imports relativos
-- `__init__.py` como fachada
-- Una clase por ventana (herencia múltiple / mixins)
-- Separar cálculo (sin Tk) de interfaz
-### Lógica avanzada
-- Closures: `G` en los esquemas implícitos, `F` en `stability_region`
-- Argumentos opcionales para evitar estado global
-- `lru_cache` para cachear cálculos caros
-### Concurrencia e interfaz
-- `threading` + sondeo con `root.after`
-- Animación con `FuncAnimation` y blitting
-- LaTeX con mathtext de Matplotlib
