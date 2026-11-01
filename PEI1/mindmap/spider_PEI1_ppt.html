@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spider PEI 1</title>
+<style>
+	:root {
+		--ink: #1f2a2e;
+		--ne: #e8873a;
+		--sp: #3a9a4a;
+		--gui: #d1453b;
+		--root: #2f4858;
+	}
+	* { box-sizing: border-box; }
+	body { margin: 0; background: #fff; font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; color: var(--ink); }
+	#slide { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: #fff; }
+	svg { position: absolute; inset: 0; }
+	.node { position: absolute; transform: translate(-50%, -50%); }
+	.root {
+		padding: 14px 26px; border-radius: 50px; background: var(--root); color: #fff;
+		font-size: 25px; font-weight: 700; white-space: nowrap; box-shadow: 0 3px 10px rgba(0,0,0,.15);
+	}
+	.hub {
+		padding: 9px 20px; border-radius: 40px; color: #fff; white-space: nowrap;
+		font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 23px; font-weight: 700;
+		box-shadow: 0 2px 8px rgba(0,0,0,.15);
+	}
+	.card {
+		background: #fff; border: 2px solid var(--c); border-radius: 10px; padding: 5px 9px 7px;
+		box-shadow: 0 1px 4px rgba(0,0,0,.08);
+	}
+	.card .name {
+		font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 15.5px; font-weight: 700;
+		white-space: nowrap; color: var(--ink);
+	}
+	.funcs { display: flex; flex-wrap: wrap; gap: 3px 4px; margin-top: 4px; }
+	.func {
+		padding: 0 7px; border-radius: 999px; background: color-mix(in srgb, var(--c) 14%, white);
+		font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 13px; white-space: nowrap;
+	}
+	.func.label { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+	.legend {
+		position: absolute; right: 26px; bottom: 20px; font-size: 14px; line-height: 1.55;
+		background: rgba(255,255,255,.92); padding: 8px 12px; border: 1px solid #dfe5e4; border-radius: 8px;
+	}
+	.legend svg { position: static; vertical-align: middle; margin-right: 6px; }
+</style>
+</head>
+<body>
+<div id="slide">
+	<svg id="legs"></svg>
+	<svg id="deps"></svg>
+	<div id="nodes"></div>
+	<div class="legend">
+		<div><svg width="46" height="12"><line x1="2" y1="6" x2="36" y2="6" stroke="#6b3fa0" stroke-width="2.6"/><path d="M36,1 L45,6 L36,11 z" fill="#6b3fa0"/></svg><b>A → B</b>: A usa funciones de B (entre grupos)</div>
+		<div><svg width="46" height="12"><line x1="2" y1="6" x2="36" y2="6" stroke="#5f6b72" stroke-width="1.6" stroke-dasharray="5 4"/><path d="M36,2 L44,6 L36,10 z" fill="#5f6b72"/></svg>Dependencia dentro del mismo grupo</div>
+		<div style="color:#5f6b72">Flechas omitidas: <code>config.py</code> (lo usan todos los ficheros de <code>gui_reactive</code>)<br>y <code>widgets.py</code> (lo usan <code>app.py</code> y las 4 ventanas)</div>
+	</div>
+</div>
+<script>
+// Posiciones (centro de cada nodo) en una diapositiva de 1920 x 1080.
+const ROOT = { id: "root", text: "PEI 1 · Simulador de actitud satelital", x: 960, y: 52 };
+const GROUPS = [
+	{ id: "ne", name: "numerical_engine", color: "var(--ne)", x: 330, y: 200 },
+	{ id: "sp", name: "space_physics", color: "var(--sp)", x: 1590, y: 200 },
+	{ id: "gui", name: "gui_reactive", color: "var(--gui)", x: 960, y: 330 },
+];
+const FILES = [
+	// numerical_engine
+	{ id: "linear", g: "ne", name: "linear_solvers.py", funcs: ["partition"], x: 140, y: 340 },
+	{ id: "nonlinear", g: "ne", name: "non_linear_solvers.py", funcs: ["our_jacobian", "our_Newton"], x: 600, y: 292 },
+	{ id: "schemes", g: "ne", name: "numerical_schemes.py", funcs: ["Euler", "RK4", "Crank_Nicolson", "Inverse_Euler"], x: 450, y: 380, w: 245 },
+	{ id: "cauchy", g: "ne", name: "Cauchy_problem.py", funcs: ["Cauchy_Problem"], x: 450, y: 730 },
+	{ id: "richardson", g: "ne", name: "Richardson_error.py", funcs: ["estimate_scheme_order", "Richardson_Error"], x: 450, y: 560, w: 215 },
+	{ id: "stability", g: "ne", name: "numerical_stability_region.py", funcs: ["create_mesh", "stability_region"], x: 450, y: 900 },
+	// space_physics
+	{ id: "euler", g: "sp", name: "Euler_equations.py", funcs: ["Euler_Equations"], x: 1515, y: 370 },
+	{ id: "attitude", g: "sp", name: "attitude_equations.py", funcs: ["Attitude_Equations", "nearest_rotation"], x: 1770, y: 340, w: 215 },
+	{ id: "kinetic", g: "sp", name: "kinetic_energy.py", funcs: ["T"], x: 1490, y: 470 },
+	{ id: "angular", g: "sp", name: "angular_momentum.py", funcs: ["L"], x: 1490, y: 585 },
+	{ id: "invariants", g: "sp", name: "invariants_drift.py", funcs: ["invariants_drift"], x: 1770, y: 530 },
+	{ id: "equilibrium", g: "sp", name: "equilibrium_espectrum.py", funcs: ["equilibrium_spectrum"], x: 1330, y: 292 },
+	{ id: "exact", g: "sp", name: "exact_jacobian.py", funcs: ["exact_Jacobian"], x: 1800, y: 90 },
+	{ id: "separatrix", g: "sp", name: "separatrix.py", funcs: ["separatrix"], x: 1490, y: 700 },
+	// gui_reactive
+	{ id: "main", g: "gui", name: "main.py", funcs: ["main"], x: 960, y: 1025 },
+	{ id: "app", g: "gui", name: "app.py", funcs: ["SatelliteAttitudeApp"], x: 960, y: 905 },
+	{ id: "config", g: "gui", name: "config.py", funcs: ["SCHEMES", "PAGE_TITLES"], x: 735, y: 368 },
+	{ id: "widgets", g: "gui", name: "widgets.py", funcs: ["MathLabel", "make_canvas", "make_card", "slider_control"], x: 1230, y: 905, w: 250 },
+	{ id: "helpers", g: "gui", name: "helpers.py", funcs: ["satellite_model", "shaded_colors", "ellipsoid", "format_spectrum", "latex_sci",
+		"error_summary", "stability_map", "amplification_at", "first_invalid", "set_inertias"], x: 960, y: 720, w: 330 },
+	{ id: "simulation", g: "gui", name: "simulation.py", funcs: ["run_scheme", "richardson"], x: 960, y: 520 },
+	{ id: "win1", g: "gui", name: "window_initial_conditions.py", funcs: ["Ventana 1 · Satélite y Condiciones Iniciales"], x: 1225, y: 430 },
+	{ id: "win2", g: "gui", name: "window_numerical_schemes.py", funcs: ["Ventana 2 · Esquemas Numéricos"], x: 760, y: 200 },
+	{ id: "win3", g: "gui", name: "window_numerical_integration.py", funcs: ["Ventana 3 · Integración numérica"], x: 1215, y: 600 },
+	{ id: "win4", g: "gui", name: "window_estimated_error.py", funcs: ["Ventana 4 · Error Estimado"], x: 690, y: 1003 },
+];
+// Dependencias reales (A usa B), sacadas de los import de cada fichero (sin config.py ni widgets.py).
+const DEPS = [
+	["schemes", "nonlinear"], ["richardson", "linear"], ["richardson", "cauchy"],
+	["attitude", "euler"], ["equilibrium", "euler"], ["equilibrium", "nonlinear"],
+	["invariants", "kinetic"], ["invariants", "angular"],
+	["main", "app"], ["app", "simulation"],
+	["app", "win1"], ["app", "win2"], ["app", "win3"], ["app", "win4"],
+	["config", "schemes"],
+	["helpers", "stability"], ["helpers", "euler"],
+	["simulation", "cauchy"], ["simulation", "richardson"], ["simulation", "euler"], ["simulation", "attitude"],
+	["simulation", "invariants"], ["simulation", "helpers"],
+	["win1", "angular"], ["win1", "kinetic"], ["win1", "equilibrium"], ["win1", "separatrix"], ["win1", "helpers"],
+	["win2", "linear"], ["win2", "equilibrium"], ["win2", "helpers"], ["win2", "simulation"],
+	["win3", "angular"], ["win3", "kinetic"], ["win3", "separatrix"], ["win3", "helpers"],
+	["win4", "helpers"],
+];
+
+const nodes = document.getElementById("nodes");
+const color = Object.fromEntries(GROUPS.map(g => [g.id, g.color]));
+function place(el, x, y) { el.style.left = x + "px"; el.style.top = y + "px"; nodes.appendChild(el); return el; }
+const root = place(Object.assign(document.createElement("div"), { className: "node root", textContent: ROOT.text }), ROOT.x, ROOT.y);
+const el = { root };
+for (const g of GROUPS) {
+	const hub = Object.assign(document.createElement("div"), { className: "node hub", textContent: g.name });
+	hub.style.background = g.color;
+	el[g.id] = place(hub, g.x, g.y);
+}
+for (const f of FILES) {
+	const card = document.createElement("div");
+	card.className = "node card";
+	card.style.setProperty("--c", color[f.g]);
+	if (f.w) card.style.width = f.w + "px";
+	const chips = f.funcs.map(n => `<span class="func${n.startsWith("Ventana") ? " label" : ""}">${n}</span>`).join("");
+	card.innerHTML = `<div class="name">${f.name}</div><div class="funcs">${chips}</div>`;
+	el[f.id] = place(card, f.x, f.y);
+}
+
+function rect(e) {
+	const s = document.getElementById("slide").getBoundingClientRect(), r = e.getBoundingClientRect();
+	return { cx: r.left - s.left + r.width / 2, cy: r.top - s.top + r.height / 2, hw: r.width / 2, hh: r.height / 2 };
+}
+// Punto del borde del rectángulo `r` en la dirección (dx, dy).
+function border(r, dx, dy, pad = 0) {
+	const t = Math.min((r.hw + pad) / Math.abs(dx || 1e-9), (r.hh + pad) / Math.abs(dy || 1e-9));
+	return [r.cx + dx * t, r.cy + dy * t];
+}
+function curve(a, b, bend, pad) {
+	const dx = b.cx - a.cx, dy = b.cy - a.cy, len = Math.hypot(dx, dy);
+	const mx = (a.cx + b.cx) / 2 - dy / len * bend * len, my = (a.cy + b.cy) / 2 + dx / len * bend * len;
+	const [x1, y1] = border(a, mx - a.cx, my - a.cy, 2);
+	const [x2, y2] = border(b, mx - b.cx, my - b.cy, pad);
+	return `M${x1},${y1} Q${mx},${my} ${x2},${y2}`;
+}
+function draw() {
+	const legs = document.getElementById("legs"), deps = document.getElementById("deps");
+	for (const s of [legs, deps]) { s.setAttribute("width", 1920); s.setAttribute("height", 1080); }
+	let l = "";
+	const r = rect(root);
+	for (const g of GROUPS) {
+		const stroke = getComputedStyle(el[g.id]).backgroundColor, h = rect(el[g.id]);
+		l += `<path d="M${r.cx},${r.cy} L${h.cx},${h.cy}" stroke="${stroke}" stroke-width="7" stroke-linecap="round"/>`;
+		for (const f of FILES.filter(f => f.g === g.id)) {
+			const c = rect(el[f.id]);
+			l += `<path d="M${h.cx},${h.cy} L${c.cx},${c.cy}" stroke="${stroke}" stroke-width="3.5" opacity="0.45" stroke-linecap="round"/>`;
+		}
+	}
+	legs.innerHTML = l;
+	const group = Object.fromEntries(FILES.map(f => [f.id, f.g]));
+	let d = `<defs>
+		<marker id="cross" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b3fa0"/></marker>
+		<marker id="intra" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5f6b72"/></marker>
+	</defs>`;
+	for (const [a, b] of DEPS) {
+		const cross = group[a] !== group[b];
+		const path = curve(rect(el[a]), rect(el[b]), cross ? 0.12 : 0.18, 3);
+		d += cross
+			? `<path d="${path}" stroke="#6b3fa0" stroke-width="2.6" fill="none" opacity="0.8" marker-end="url(#cross)"/>`
+			: `<path d="${path}" stroke="#5f6b72" stroke-width="1.6" fill="none" stroke-dasharray="6 4" opacity="0.85" marker-end="url(#intra)"/>`;
+	}
+	deps.innerHTML = d;
+}
+document.fonts.ready.then(draw);
+</script>
+</body>
+</html>
