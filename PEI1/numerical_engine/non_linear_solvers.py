@@ -14,7 +14,8 @@ def our_jacobian(F: Callable[[array,float],array], U: array, t: float) -> array:
     n = len(U)
     # Mismo tipo que U: con U complejo (región de estabilidad) la parte imaginaria no se pierde.
     J = zeros((n, n), dtype=U.dtype)
-    h = 1e-8  # small perturbation for numerical differentiation
+    # Diferencias centradas (2º orden, error O(h²)). h ≈ eps^(1/3) equilibra truncamiento y redondeo.
+    h = 1e-6  # small perturbation for numerical differentiation
 
     for i in range(n):
         U_perturbed_forward = U.copy()
