@@ -9,6 +9,7 @@ import numpy as np
 from matplotlib.figure import Figure
 
 from numerical_engine.linear_solvers import partition
+from numerical_engine.non_linear_solvers import our_jacobian
 from space_physics.equilibrium_espectrum import equilibrium_spectrum
 
 from .config import BACKGROUND, CARD, DT_MAX, MAX_STEPS, SCHEMES, Array
@@ -87,7 +88,7 @@ class NumericalSchemesWindow:
 			self._draw_stability_regions()
 
 	def _stability_points(self) -> tuple[Array, bool]:
-		eigenvalues, unstable = equilibrium_spectrum(*self.inertias, np.deg2rad(self.omega_degrees), self._axis_index())
+		eigenvalues, unstable = equilibrium_spectrum(*self.inertias, np.deg2rad(self.omega_degrees), self._axis_index(), our_jacobian)
 		return eigenvalues * self.dt, unstable
 
 	def _draw_stability_regions(self) -> None:

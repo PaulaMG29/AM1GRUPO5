@@ -86,7 +86,7 @@ const FILES = [
 	// gui_reactive
 	{ id: "main", g: "gui", name: "main.py", funcs: ["main"], x: 960, y: 1025 },
 	{ id: "app", g: "gui", name: "app.py", funcs: ["SatelliteAttitudeApp"], x: 960, y: 905 },
-	{ id: "config", g: "gui", name: "config.py", funcs: ["SCHEMES", "PAGE_TITLES"], x: 735, y: 368 },
+	{ id: "config", g: "gui", name: "config.py", funcs: ["SCHEMES", "PAGE_TITLES"], x: 740, y: 455 },
 	{ id: "widgets", g: "gui", name: "widgets.py", funcs: ["MathLabel", "make_canvas", "make_card", "slider_control"], x: 1230, y: 905, w: 250 },
 	{ id: "helpers", g: "gui", name: "helpers.py", funcs: ["satellite_model", "shaded_colors", "ellipsoid", "format_spectrum", "latex_sci",
 		"error_summary", "stability_map", "amplification_at", "first_invalid", "set_inertias"], x: 960, y: 720, w: 330 },
@@ -99,7 +99,7 @@ const FILES = [
 // Dependencias reales (A usa B), sacadas de los import de cada fichero (sin config.py ni widgets.py).
 const DEPS = [
 	["schemes", "nonlinear"], ["richardson", "linear"], ["richardson", "cauchy"],
-	["attitude", "euler"], ["equilibrium", "euler"], ["equilibrium", "nonlinear"],
+	["attitude", "euler"], ["equilibrium", "euler"],
 	["invariants", "kinetic"], ["invariants", "angular"],
 	["main", "app"], ["app", "simulation"],
 	["app", "win1"], ["app", "win2"], ["app", "win3"], ["app", "win4"],
@@ -107,8 +107,8 @@ const DEPS = [
 	["helpers", "stability"], ["helpers", "euler"],
 	["simulation", "cauchy"], ["simulation", "richardson"], ["simulation", "euler"], ["simulation", "attitude"],
 	["simulation", "invariants"], ["simulation", "helpers"],
-	["win1", "angular"], ["win1", "kinetic"], ["win1", "equilibrium"], ["win1", "separatrix"], ["win1", "helpers"],
-	["win2", "linear"], ["win2", "equilibrium"], ["win2", "helpers"], ["win2", "simulation"],
+	["win1", "nonlinear", -0.1], ["win1", "angular"], ["win1", "kinetic"], ["win1", "equilibrium"], ["win1", "separatrix"], ["win1", "helpers"],
+	["win2", "linear"], ["win2", "nonlinear"], ["win2", "equilibrium"], ["win2", "helpers"], ["win2", "simulation"],
 	["win3", "angular"], ["win3", "kinetic"], ["win3", "separatrix"], ["win3", "helpers"],
 	["win4", "helpers"],
 ];
@@ -168,9 +168,10 @@ function draw() {
 		<marker id="cross" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b3fa0"/></marker>
 		<marker id="intra" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5f6b72"/></marker>
 	</defs>`;
-	for (const [a, b] of DEPS) {
+	for (const [a, b, bend] of DEPS) {
 		const cross = group[a] !== group[b];
-		const path = curve(rect(el[a]), rect(el[b]), cross ? 0.12 : 0.18, 3);
+		// Curvatura propia opcional (3.er elemento) para esquivar nodos.
+		const path = curve(rect(el[a]), rect(el[b]), bend ?? (cross ? 0.12 : 0.18), 3);
 		d += cross
 			? `<path d="${path}" stroke="#6b3fa0" stroke-width="2.6" fill="none" opacity="0.8" marker-end="url(#cross)"/>`
 			: `<path d="${path}" stroke="#5f6b72" stroke-width="1.6" fill="none" stroke-dasharray="6 4" opacity="0.85" marker-end="url(#intra)"/>`;

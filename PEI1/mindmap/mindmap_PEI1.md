@@ -65,7 +65,8 @@ markmap:
 ### Estabilidad de los equilibrios
 - `equilibrium_espectrum.py` → `equilibrium_spectrum`
   - Equilibrio $\omega^*_k = \Omega\,\mathbf{e}_k$
-  - Autovalores de `our_jacobian(Euler_Equations)`
+  - Autovalores del Jacobiano de `Euler_Equations`
+  - El Jacobiano llega como argumento: la GUI pasa `our_jacobian`
   - Silla (inestable) o centro (estable)
 - `exact_jacobian.py` → `exact_Jacobian` (referencia analítica)
 - Efecto Dzhanibekov: el eje intermedio $I_2$ es inestable
