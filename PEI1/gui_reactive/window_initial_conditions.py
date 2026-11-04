@@ -9,6 +9,7 @@ import numpy as np
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
+from numerical_engine.non_linear_solvers import our_jacobian
 from space_physics.angular_momentum import L
 from space_physics.equilibrium_espectrum import equilibrium_spectrum
 from space_physics.kinetic_energy import T
@@ -153,7 +154,7 @@ class InitialConditionsWindow:
 		rate = np.deg2rad(self.omega_degrees)
 		axis_names = (r"$\mathbf{e}_1$ · $I$ mínima", r"$\mathbf{e}_2$ · $I$ intermedia", r"$\mathbf{e}_3$ · $I$ máxima")
 		for index, labels in enumerate(self.spectrum_rows):
-			eigenvalues, unstable = equilibrium_spectrum(*inertia, rate, index)
+			eigenvalues, unstable = equilibrium_spectrum(*inertia, rate, index, our_jacobian)
 			selected = index == self._axis_index()
 			background = "#e6f2ef" if selected else CARD
 			texts = (
@@ -170,7 +171,7 @@ class InitialConditionsWindow:
 					color=(UNSTABLE_COLOR if unstable else STABLE_COLOR) if column == 3 else "#172b2a",
 					weight="bold" if selected else "normal",
 				)
-		eigenvalues, unstable = equilibrium_spectrum(*inertia, rate, self._axis_index())
+		eigenvalues, unstable = equilibrium_spectrum(*inertia, rate, self._axis_index(), our_jacobian)
 		growth = float(np.max(eigenvalues.real))
 		if unstable:
 			flip = np.log(1 / 10.0**self.log_perturbation) / growth
